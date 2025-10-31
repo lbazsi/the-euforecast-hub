@@ -6,5 +6,5 @@ router = APIRouter()
 @router.post("/run")
 def forecast_endpoint():
     """Run basic forecasting model."""
-    results = run_forecast()
-    return results
+    return run_forecast()
+
