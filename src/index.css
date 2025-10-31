@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* EU ForecastHUB Dark Theme */
+    --background: 0 0% 5.9%;  /* #0F0F0F - Soft black */
+    --foreground: 0 0% 94.9%; /* #F2F2F2 - Off-white */
+
+    --card: 0 0% 10.2%;       /* #1A1A1A - Charcoal gray */
+    --card-foreground: 0 0% 94.9%;
+
+    --popover: 0 0% 10.2%;
+    --popover-foreground: 0 0% 94.9%;
+
+    --primary: 0 0% 100%;     /* #FFFFFF - Pure white */
+    --primary-foreground: 0 0% 5.9%;
+
+    --secondary: 0 0% 18.0%;  /* #2E2E2E - Medium gray */
+    --secondary-foreground: 0 0% 94.9%;
+
+    --muted: 0 0% 18.0%;
+    --muted-foreground: 0 0% 70.2%; /* #B3B3B3 - Muted gray */
+
+    --accent: 186 79% 82%;    /* #A5F3FC - Subtle cyan */
+    --accent-foreground: 0 0% 5.9%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 18.0%;     /* #2E2E2E - Medium gray */
+    --input: 0 0% 18.0%;
+    --ring: 186 79% 82%;
+
+    --radius: 0.5rem;
+    
+    /* Custom colors for emphasis */
+    --emphasis: 48 96% 53%;   /* #FACC15 - Soft yellow */
+    --electric: 0 0% 85.5%;   /* #DADADA - Electric gray */
+  }
+
+  .dark {
+    --background: 0 0% 5.9%;
+    --foreground: 0 0% 94.9%;
+
+    --card: 0 0% 10.2%;
+    --card-foreground: 0 0% 94.9%;
+
+    --popover: 0 0% 10.2%;
+    --popover-foreground: 0 0% 94.9%;
+
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 5.9%;
+
+    --secondary: 0 0% 18.0%;
+    --secondary-foreground: 0 0% 94.9%;
+
+    --muted: 0 0% 18.0%;
+    --muted-foreground: 0 0% 70.2%;
+
+    --accent: 186 79% 82%;
+    --accent-foreground: 0 0% 5.9%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 18.0%;
+    --input: 0 0% 18.0%;
+    --ring: 186 79% 82%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+  }
+}
+
+/* Network animation keyframes */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+@keyframes pulse-line {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+@keyframes dot-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
