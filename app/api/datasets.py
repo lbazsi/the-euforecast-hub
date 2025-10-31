@@ -10,5 +10,5 @@ def dataset_list():
 
 @router.get("/sample")
 def sample_dataset():
-    """Return a sample dataset preview."""
+    """Return a preview of sample dataset."""
     return load_sample_data()
