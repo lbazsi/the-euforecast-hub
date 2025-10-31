@@ -6,5 +6,4 @@ router = APIRouter()
 @router.post("/run")
 def killchain_endpoint():
     """Run kill-chain-based forecasting."""
-    results = run_killchain()
-    return results
+    return run_killchain()
