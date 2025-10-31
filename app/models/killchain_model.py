@@ -1,5 +1,5 @@
 def killchain_simulation(initial_prob=0.8):
-    """Simple kill-chain simulation based on sequential probability decay."""
+    """Classical kill-chain logic with probability decay across stages."""
     stages = [
         {"name": "Observation", "prob": round(initial_prob, 2)},
         {"name": "Characterization", "prob": round(initial_prob * 0.9, 2)},
