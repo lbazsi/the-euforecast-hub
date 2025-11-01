@@ -40,6 +40,7 @@ const Index = () => {
                 size="lg" 
                 variant="outline" 
                 className="text-lg px-8 py-6 border-2 border-border font-medium"
+                onClick={() => navigate("/forecasts")}
               >
                 Explore Forecasts
               </Button>
@@ -47,6 +48,7 @@ const Index = () => {
                 size="lg" 
                 variant="secondary" 
                 className="text-lg px-8 py-6 bg-card hover:bg-secondary font-medium"
+                onClick={() => navigate("/collaborations")}
               >
                 <Users className="mr-2 h-5 w-5" />
                 Collaborate

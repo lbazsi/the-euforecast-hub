@@ -1,22 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { FileText, Save, Download, Eye, HelpCircle, X, ChevronDown, Send, Paperclip } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { FileText, Save, Download, Eye, HelpCircle, Send, Paperclip } from "lucide-react";
 import { useState } from "react";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import {
   Dialog,
@@ -28,44 +15,8 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 
-interface LinearTrendConfig {
-  targetVariable: string;
-  predictorVariables: string;
-  timeWindowStart: string;
-  timeWindowEnd: string;
-  forecastHorizon: number;
-  regularization: "none" | "ridge" | "lasso";
-  confidenceLevel: number;
-}
-
-interface PolynomialTrendConfig {
-  targetVariable: string;
-  predictorVariables: string;
-  degree: number;
-  forecastHorizon: number;
-  regularization: "none" | "ridge" | "lasso";
-  confidenceLevel: number;
-}
-
-interface CanvasBlock {
-  id: string;
-  name: string;
-  type: string;
-  description: string;
-  position: { x: number; y: number };
-  uploadedFile?: File;
-  linearTrendConfig?: LinearTrendConfig;
-  polynomialTrendConfig?: PolynomialTrendConfig;
-}
 
 const Builder = () => {
-  const navigate = useNavigate();
-  const [selectedModule, setSelectedModule] = useState("Data");
-  const [selectedComponent, setSelectedComponent] = useState<string | null>(null);
-  const [canvasBlocks, setCanvasBlocks] = useState<CanvasBlock[]>([]);
-  const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
-  const [draggingBlock, setDraggingBlock] = useState<string | null>(null);
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [messageInput, setMessageInput] = useState("");
   const [selectedKillChainStage, setSelectedKillChainStage] = useState<string | null>(null);
   const [isCollaborateDialogOpen, setIsCollaborateDialogOpen] = useState(false);
@@ -78,6 +29,7 @@ const Builder = () => {
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [publishForm, setPublishForm] = useState({
     name: "",
+    publisherName: "",
     projectKeywords: "",
     projectDescription: ""
   });
@@ -127,148 +79,6 @@ const Builder = () => {
       }
     }));
   };
-
-  const dataComponents = [
-    {
-      name: "Dataset Selector",
-      description: "Connects to Eurostat, Copernicus, and other EU repositories through API links."
-    },
-    {
-      name: "Manual Upload",
-      description: "Allows CSV, Excel, or API input with variable mapping."
-    },
-    {
-      name: "Live Feed Connector",
-      description: "Integrates near-real-time updates (e.g., weather stations, satellite indices)."
-    },
-    {
-      name: "Preprocessing Block",
-      description: "Cleans data — handling missing values, scaling, smoothing, and noise filtering."
-    },
-    {
-      name: "Feature Constructor",
-      description: "Lets users create derived indicators (growth rates, moving averages, lag features)."
-    }
-  ];
-
-  const modelComponents = {
-    "Trend Projection Models": [
-      { name: "Linear Trend", description: "Simple linear regression model for trend analysis." },
-      { name: "Polynomial Trend", description: "Polynomial regression for non-linear trend patterns." },
-      { name: "Exponential Growth / Decay", description: "Models exponential growth or decay patterns." },
-      { name: "Logistic (Sigmoidal) Trend", description: "S-shaped curve for growth with saturation limits." },
-      { name: "Piecewise Regression", description: "Regression with breakpoints for changing trends." }
-    ],
-    "Causal Models": [
-      { name: "Multiple Linear Regression", description: "Linear model with multiple predictor variables." },
-      { name: "Bayesian Network", description: "Probabilistic graphical model for causal relationships." },
-      { name: "Structural Equation Model (SEM)", description: "Models complex relationships between variables." },
-      { name: "Granger Causality Tester", description: "Tests whether one time series predicts another." }
-    ]
-  };
-
-  const addBlockToCanvas = (component: { name: string; description: string }) => {
-    const newBlock: CanvasBlock = {
-      id: `block-${Date.now()}`,
-      name: component.name,
-      type: component.name,
-      description: component.description,
-      position: { x: 100 + canvasBlocks.length * 30, y: 100 + canvasBlocks.length * 30 }
-    };
-    setCanvasBlocks([...canvasBlocks, newBlock]);
-    setSelectedBlock(newBlock.id);
-    setSelectedComponent(null);
-  };
-
-  const handleBlockMouseDown = (e: React.MouseEvent, blockId: string) => {
-    e.stopPropagation();
-    const block = canvasBlocks.find(b => b.id === blockId);
-    if (block) {
-      setDraggingBlock(blockId);
-      setSelectedBlock(blockId);
-      setDragOffset({
-        x: e.clientX - block.position.x,
-        y: e.clientY - block.position.y
-      });
-    }
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (draggingBlock) {
-      setCanvasBlocks(canvasBlocks.map(block =>
-        block.id === draggingBlock
-          ? { ...block, position: { x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y } }
-          : block
-      ));
-    }
-  };
-
-  const handleMouseUp = () => {
-    setDraggingBlock(null);
-  };
-
-  const handleFileUpload = (blockId: string, file: File) => {
-    setCanvasBlocks(canvasBlocks.map(block =>
-      block.id === blockId ? { ...block, uploadedFile: file } : block
-    ));
-  };
-
-  const updateLinearTrendConfig = (blockId: string, config: Partial<LinearTrendConfig>) => {
-    setCanvasBlocks(canvasBlocks.map(block => {
-      if (block.id === blockId) {
-        const currentConfig = block.linearTrendConfig || {
-          targetVariable: "",
-          predictorVariables: "time",
-          timeWindowStart: "",
-          timeWindowEnd: "",
-          forecastHorizon: 12,
-          regularization: "none" as const,
-          confidenceLevel: 95
-        };
-        return {
-          ...block,
-          linearTrendConfig: { ...currentConfig, ...config }
-        };
-      }
-      return block;
-    }));
-  };
-
-  const updatePolynomialTrendConfig = (blockId: string, config: Partial<PolynomialTrendConfig>) => {
-    setCanvasBlocks(canvasBlocks.map(block => {
-      if (block.id === blockId) {
-        const currentConfig = block.polynomialTrendConfig || {
-          targetVariable: "",
-          predictorVariables: "time",
-          degree: 2,
-          forecastHorizon: 12,
-          regularization: "none" as const,
-          confidenceLevel: 95
-        };
-        return {
-          ...block,
-          polynomialTrendConfig: { ...currentConfig, ...config }
-        };
-      }
-      return block;
-    }));
-  };
-
-  const getComponentDescription = (componentName: string) => {
-    // Check in data components
-    const dataComp = dataComponents.find(c => c.name === componentName);
-    if (dataComp) return dataComp.description;
-    
-    // Check in model components
-    for (const subsections of Object.values(modelComponents)) {
-      const modelComp = subsections.find(c => c.name === componentName);
-      if (modelComp) return modelComp.description;
-    }
-    
-    return "No description available.";
-  };
-
-  const selectedBlockData = canvasBlocks.find(b => b.id === selectedBlock);
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -439,317 +249,6 @@ const Builder = () => {
                   Set importance level (0-1)
                 </p>
               </div>
-            </div>
-          ) : selectedBlockData ? (
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-muted-foreground mb-2 block">Block Name</label>
-                <h4 className="font-medium text-sm mb-2 text-foreground">{selectedBlockData.name}</h4>
-              </div>
-              
-              <div>
-                <label className="text-xs text-muted-foreground mb-2 block">Description</label>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {getComponentDescription(selectedBlockData.type)}
-                </p>
-              </div>
-              
-              <Separator />
-              
-              {selectedBlockData.type === "Manual Upload" && (
-                <div>
-                  <label className="text-xs text-muted-foreground mb-2 block">Upload File</label>
-                  <div className="space-y-2">
-                    <input
-                      type="file"
-                      accept=".csv,.xlsx,.xls"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file && selectedBlock) {
-                          handleFileUpload(selectedBlock, file);
-                        }
-                      }}
-                      className="w-full text-xs file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-accent file:text-accent-foreground hover:file:bg-accent/90 file:cursor-pointer"
-                    />
-                    {selectedBlockData.uploadedFile && (
-                      <div className="p-2 bg-accent/10 rounded border border-accent/20">
-                        <p className="text-xs font-medium text-foreground">
-                          {selectedBlockData.uploadedFile.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {(selectedBlockData.uploadedFile.size / 1024).toFixed(2)} KB
-                        </p>
-                      </div>
-                    )}
-                    <p className="text-xs text-muted-foreground">
-                      Accepted formats: CSV, Excel (.xlsx, .xls)
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {selectedBlockData.type === "Linear Trend" && (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="target-variable" className="text-xs text-muted-foreground">
-                      Target Variable *
-                    </Label>
-                    <Input
-                      id="target-variable"
-                      placeholder="e.g., CO₂ concentration"
-                      value={selectedBlockData.linearTrendConfig?.targetVariable || ""}
-                      onChange={(e) => updateLinearTrendConfig(selectedBlock!, { targetVariable: e.target.value })}
-                      className="h-8 text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Defines what is being forecasted
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="predictor-variables" className="text-xs text-muted-foreground">
-                      Predictor Variable(s) *
-                    </Label>
-                    <Input
-                      id="predictor-variables"
-                      placeholder="e.g., time, GDP"
-                      value={selectedBlockData.linearTrendConfig?.predictorVariables || "time"}
-                      onChange={(e) => updateLinearTrendConfig(selectedBlock!, { predictorVariables: e.target.value })}
-                      className="h-8 text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Independent variables (comma-separated)
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">
-                      Time Window
-                    </Label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <Label htmlFor="time-start" className="text-xs">Start</Label>
-                        <Input
-                          id="time-start"
-                          type="date"
-                          value={selectedBlockData.linearTrendConfig?.timeWindowStart || ""}
-                          onChange={(e) => updateLinearTrendConfig(selectedBlock!, { timeWindowStart: e.target.value })}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="time-end" className="text-xs">End</Label>
-                        <Input
-                          id="time-end"
-                          type="date"
-                          value={selectedBlockData.linearTrendConfig?.timeWindowEnd || ""}
-                          onChange={(e) => updateLinearTrendConfig(selectedBlock!, { timeWindowEnd: e.target.value })}
-                          className="h-8 text-sm"
-                        />
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Historical range for fitting the model
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="forecast-horizon" className="text-xs text-muted-foreground">
-                      Forecast Horizon *
-                    </Label>
-                    <Input
-                      id="forecast-horizon"
-                      type="number"
-                      min="1"
-                      placeholder="e.g., 12"
-                      value={selectedBlockData.linearTrendConfig?.forecastHorizon || 12}
-                      onChange={(e) => updateLinearTrendConfig(selectedBlock!, { forecastHorizon: parseInt(e.target.value) || 12 })}
-                      className="h-8 text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Number of periods to predict into the future
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="regularization" className="text-xs text-muted-foreground">
-                      Regularization
-                    </Label>
-                    <Select
-                      value={selectedBlockData.linearTrendConfig?.regularization || "none"}
-                      onValueChange={(value: "none" | "ridge" | "lasso") => 
-                        updateLinearTrendConfig(selectedBlock!, { regularization: value })
-                      }
-                    >
-                      <SelectTrigger className="h-8 text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">None</SelectItem>
-                        <SelectItem value="ridge">Ridge (L2)</SelectItem>
-                        <SelectItem value="lasso">Lasso (L1)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Penalty to prevent overfitting with multiple predictors
-                    </p>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <Label htmlFor="confidence-level" className="text-xs text-muted-foreground">
-                        Confidence Level
-                      </Label>
-                      <span className="text-sm font-medium text-foreground">
-                        {selectedBlockData.linearTrendConfig?.confidenceLevel || 95}%
-                      </span>
-                    </div>
-                    <Slider
-                      id="confidence-level"
-                      value={[selectedBlockData.linearTrendConfig?.confidenceLevel || 95]}
-                      onValueChange={([value]) => updateLinearTrendConfig(selectedBlock!, { confidenceLevel: value })}
-                      min={80}
-                      max={99}
-                      step={1}
-                      className="w-full"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Determines the interval width for uncertainty display
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {selectedBlockData.type === "Polynomial Trend" && (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="poly-target-variable" className="text-xs text-muted-foreground">
-                      Target Variable *
-                    </Label>
-                    <Input
-                      id="poly-target-variable"
-                      placeholder="e.g., CO₂ concentration"
-                      value={selectedBlockData.polynomialTrendConfig?.targetVariable || ""}
-                      onChange={(e) => updatePolynomialTrendConfig(selectedBlock!, { targetVariable: e.target.value })}
-                      className="h-8 text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Defines what is being forecasted
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="poly-predictor-variables" className="text-xs text-muted-foreground">
-                      Predictor Variable(s) *
-                    </Label>
-                    <Input
-                      id="poly-predictor-variables"
-                      placeholder="e.g., time, GDP"
-                      value={selectedBlockData.polynomialTrendConfig?.predictorVariables || "time"}
-                      onChange={(e) => updatePolynomialTrendConfig(selectedBlock!, { predictorVariables: e.target.value })}
-                      className="h-8 text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Independent variables (comma-separated)
-                    </p>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <Label htmlFor="poly-degree" className="text-xs text-muted-foreground">
-                        Polynomial Degree *
-                      </Label>
-                      <span className="text-sm font-medium text-foreground">
-                        {selectedBlockData.polynomialTrendConfig?.degree || 2}
-                      </span>
-                    </div>
-                    <Slider
-                      id="poly-degree"
-                      value={[selectedBlockData.polynomialTrendConfig?.degree || 2]}
-                      onValueChange={([value]) => updatePolynomialTrendConfig(selectedBlock!, { degree: value })}
-                      min={1}
-                      max={5}
-                      step={1}
-                      className="w-full"
-                    />
-                    <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>1 (Linear)</span>
-                      <span>2 (Quadratic)</span>
-                      <span>3 (Cubic)</span>
-                      <span>4</span>
-                      <span>5</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Higher degrees capture curvature but risk overfitting
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="poly-forecast-horizon" className="text-xs text-muted-foreground">
-                      Forecast Horizon *
-                    </Label>
-                    <Input
-                      id="poly-forecast-horizon"
-                      type="number"
-                      min="1"
-                      placeholder="e.g., 12"
-                      value={selectedBlockData.polynomialTrendConfig?.forecastHorizon || 12}
-                      onChange={(e) => updatePolynomialTrendConfig(selectedBlock!, { forecastHorizon: parseInt(e.target.value) || 12 })}
-                      className="h-8 text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Number of periods to predict into the future
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="poly-regularization" className="text-xs text-muted-foreground">
-                      Regularization
-                    </Label>
-                    <Select
-                      value={selectedBlockData.polynomialTrendConfig?.regularization || "none"}
-                      onValueChange={(value: "none" | "ridge" | "lasso") => 
-                        updatePolynomialTrendConfig(selectedBlock!, { regularization: value })
-                      }
-                    >
-                      <SelectTrigger className="h-8 text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">None</SelectItem>
-                        <SelectItem value="ridge">Ridge (L2)</SelectItem>
-                        <SelectItem value="lasso">Lasso (L1)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Penalty to prevent overfitting with multiple predictors
-                    </p>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <Label htmlFor="poly-confidence-level" className="text-xs text-muted-foreground">
-                        Confidence Level
-                      </Label>
-                      <span className="text-sm font-medium text-foreground">
-                        {selectedBlockData.polynomialTrendConfig?.confidenceLevel || 95}%
-                      </span>
-                    </div>
-                    <Slider
-                      id="poly-confidence-level"
-                      value={[selectedBlockData.polynomialTrendConfig?.confidenceLevel || 95]}
-                      onValueChange={([value]) => updatePolynomialTrendConfig(selectedBlock!, { confidenceLevel: value })}
-                      min={80}
-                      max={99}
-                      step={1}
-                      className="w-full"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Determines the interval width for uncertainty display
-                    </p>
-                  </div>
-                </div>
-              )}
             </div>
           ) : (
             <div className="text-center py-8">
@@ -998,9 +497,9 @@ const Builder = () => {
             </DialogDescription>
           </DialogHeader>
           
-          <div className="space-y-3 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="publish-name" className="text-sm">Name *</Label>
+          <div className="space-y-2 py-1">
+            <div className="space-y-1">
+              <Label htmlFor="publish-name" className="text-sm">Name of Project *</Label>
               <Input
                 id="publish-name"
                 placeholder="Enter project name"
@@ -1010,7 +509,18 @@ const Builder = () => {
               />
             </div>
 
-            <div className="space-y-1.5">
+            <div className="space-y-1">
+              <Label htmlFor="publish-publisher-name" className="text-sm">Publisher's Name *</Label>
+              <Input
+                id="publish-publisher-name"
+                placeholder="Enter publisher's name"
+                value={publishForm.publisherName}
+                onChange={(e) => setPublishForm({ ...publishForm, publisherName: e.target.value })}
+                className="h-9"
+              />
+            </div>
+
+            <div className="space-y-1">
               <Label htmlFor="publish-keywords" className="text-sm">Project Keywords *</Label>
               <Input
                 id="publish-keywords"
@@ -1022,14 +532,14 @@ const Builder = () => {
               <p className="text-xs text-muted-foreground">Comma-separated keywords</p>
             </div>
 
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <Label htmlFor="publish-description" className="text-sm">Project Description *</Label>
               <Textarea
                 id="publish-description"
                 placeholder="Describe your forecast project..."
                 value={publishForm.projectDescription}
                 onChange={(e) => setPublishForm({ ...publishForm, projectDescription: e.target.value })}
-                rows={2}
+                rows={1}
                 className="resize-none text-sm"
               />
             </div>
@@ -1040,7 +550,7 @@ const Builder = () => {
               variant="outline"
               onClick={() => {
                 setIsPublishDialogOpen(false);
-                setPublishForm({ name: "", projectKeywords: "", projectDescription: "" });
+                setPublishForm({ name: "", publisherName: "", projectKeywords: "", projectDescription: "" });
               }}
             >
               Cancel
@@ -1050,9 +560,9 @@ const Builder = () => {
                 // Handle form submission here
                 console.log("Publish form submitted:", publishForm);
                 setIsPublishDialogOpen(false);
-                setPublishForm({ name: "", projectKeywords: "", projectDescription: "" });
+                setPublishForm({ name: "", publisherName: "", projectKeywords: "", projectDescription: "" });
               }}
-              disabled={!publishForm.name || !publishForm.projectKeywords || !publishForm.projectDescription}
+              disabled={!publishForm.name || !publishForm.publisherName || !publishForm.projectKeywords || !publishForm.projectDescription}
             >
               Publish
             </Button>
@@ -1064,5 +574,3 @@ const Builder = () => {
 };
 
 export default Builder;
-
-
