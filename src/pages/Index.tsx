@@ -1,8 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Users, Building2, Globe, Network, ArrowRight, Github } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const Index = () => {
+  const navigate = useNavigate();
+
   return (
     <div className="min-h-screen bg-background">
       {/* Hero Section */}
@@ -27,14 +30,16 @@ const Index = () => {
               <Button 
                 size="lg" 
                 className="text-lg px-8 py-6 bg-primary hover:bg-primary/90 text-primary-foreground font-medium group"
+                onClick={() => navigate("/builder")}
               >
-                Start Building
+                <Network className="mr-2 h-5 w-5" />
+                Forecast With Killchain
                 <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
               </Button>
               <Button 
                 size="lg" 
                 variant="outline" 
-                className="text-lg px-8 py-6 border-2 border-border hover:border-accent hover:text-accent font-medium"
+                className="text-lg px-8 py-6 border-2 border-border font-medium"
               >
                 Explore Forecasts
               </Button>
@@ -43,8 +48,8 @@ const Index = () => {
                 variant="secondary" 
                 className="text-lg px-8 py-6 bg-card hover:bg-secondary font-medium"
               >
-                <Network className="mr-2 h-5 w-5" />
-                Forecast with Kill-Chains
+                <Users className="mr-2 h-5 w-5" />
+                Collaborate
               </Button>
             </div>
           </div>
