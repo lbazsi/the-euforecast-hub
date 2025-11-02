@@ -99,7 +99,6 @@ const Collaborations = () => {
       {/* Header Section */}
       <div className="border-b border-border bg-card">
         <div className="container mx-auto px-4 py-12">
-<<<<<<< HEAD
           {/* Home Button - Upper Left */}
           <div className="mb-6">
             <Button 
