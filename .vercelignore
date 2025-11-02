@@ -28,8 +28,3 @@ README.md
 tests/
 test_*.py
 *_test.py
-
-# Exclude app directory from being treated as serverless functions
-# (Vercel should only use api/ directory)
-app/**/*.py
-!app/**/__init__.py
