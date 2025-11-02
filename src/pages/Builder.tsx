@@ -146,15 +146,18 @@ const Builder = () => {
   };
 
   const handleRunForecast = async () => {
-    // Use messageInput as prompt, or get latest user message
-    const prompt = messageInput.trim() || 
-      (messages.filter(m => m.type === 'user').slice(-1)[0]?.message) ||
-      "Generate a forecast based on the configured scenario.";
+    // Always use current messageInput first, then check messages history
+    const currentInput = messageInput.trim();
+    const lastUserMessage = messages.filter(m => m.type === 'user').slice(-1)[0]?.message?.trim();
     
-    if (!prompt) {
+    // Use the current input if available, otherwise use the last user message
+    const prompt = currentInput || lastUserMessage;
+    
+    // Validate: Must have a real prompt (not empty and not just whitespace)
+    if (!prompt || prompt.length === 0) {
       toast({
         title: "Prompt Required",
-        description: "Please enter a scenario prompt or message before running the forecast.",
+        description: "Please enter a scenario prompt in the chat before running the forecast.",
         variant: "destructive",
       });
       return;
@@ -190,6 +193,7 @@ const Builder = () => {
         setForecastResult(res.data);
         
         // Console logs for debugging
+        console.log("Forecast generated successfully!");
         console.log("Nodes:", res.data.nodes);
         console.log("Edges:", res.data.edges);
         console.log("Stage:", res.data.stage);
@@ -219,6 +223,7 @@ const Builder = () => {
       });
       
       console.error("Forecast generation error:", error);
+      console.error("Prompt that failed:", prompt);
     } finally {
       setIsLoading(false);
     }
@@ -301,7 +306,8 @@ const Builder = () => {
           size="sm" 
           className="gap-2"
           onClick={handleRunForecast}
-          disabled={isLoading}
+          disabled={isLoading || (!messageInput.trim() && messages.filter(m => m.type === 'user').length === 0)}
+          title={!messageInput.trim() && messages.filter(m => m.type === 'user').length === 0 ? "Please enter a scenario prompt first" : "Run forecast"}
         >
           {isLoading ? (
             <>
