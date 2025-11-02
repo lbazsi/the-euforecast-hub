@@ -44,33 +44,34 @@ class ApiError extends Error {
 }
 
 async function handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
-  const contentType = response.headers.get('content-type');
-  const isJson = contentType?.includes('application/json');
+  const text = await response.text();
+  
+  // Try to parse JSON, even if content-type is not set correctly
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    console.warn("Non-JSON response:", text);
+    if (!response.ok) {
+      throw new ApiError(
+        'INVALID_RESPONSE',
+        `Backend did not return JSON: ${text.substring(0, 200)}`,
+        response.status
+      );
+    }
+    throw new Error("Backend did not return JSON");
+  }
   
   if (!response.ok) {
-    let errorData: any = {};
-    if (isJson) {
-      try {
-        errorData = await response.json();
-      } catch {
-        // Fall through
-      }
-    }
-    
-    const error = errorData.error || errorData.detail || {};
+    const error = data.error || data.detail || {};
     throw new ApiError(
       error.code || 'UNKNOWN_ERROR',
-      error.message || response.statusText,
+      error.message || response.statusText || JSON.stringify(data),
       response.status,
       error.details
     );
   }
   
-  if (!isJson) {
-    return { success: true } as ApiResponse<T>;
-  }
-  
-  const data = await response.json();
   return data;
 }
 
@@ -159,11 +160,52 @@ export const dbnApi = {
 
 // Forecasts-specific API calls
 export const forecastsApi = {
-  async generate(prompt: string, stageConfigs: any = {}) {
-    return api.post('/forecasts/generate', {
-      prompt,
-      stage_configs: stageConfigs,
+  /**
+   * Generate a forecast using LLaMA and return DBN structure.
+   * @param prompt The user's forecast scenario prompt
+   * @param stageConfigs Domain weights or stage configurations (snake_case keys expected)
+   * @returns Full response with success flag and data containing nodes/edges
+   */
+  async generate(prompt: string, stageConfigs: Record<string, any> = {}): Promise<ApiResponse<{
+    nodes: any[];
+    edges: any[];
+    stage: string;
+    using_fallback: boolean;
+  }>> {
+    const response = await fetch(`${API_BASE_URL}/forecasts/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        stage_configs: stageConfigs ?? {}, // snake_case to match backend
+      }),
     });
+    
+    const text = await response.text();
+    let data: ApiResponse<any>;
+    
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.warn("Non-JSON response:", text);
+      throw new ApiError(
+        'INVALID_RESPONSE',
+        `Backend did not return JSON: ${text.substring(0, 200)}`,
+        response.status
+      );
+    }
+    
+    if (!response.ok || !data.success) {
+      const error = data.error || data.detail || {};
+      throw new ApiError(
+        error.code || 'GENERATION_ERROR',
+        error.message || 'Forecast generation failed',
+        response.status,
+        error.details
+      );
+    }
+    
+    return data;
   },
 };
 
