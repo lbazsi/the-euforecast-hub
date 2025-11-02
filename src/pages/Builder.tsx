@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { FileText, Save, Download, Eye, HelpCircle, Send, Paperclip } from "lucide-react";
+import { FileText, Save, Download, Eye, HelpCircle, Send, Paperclip, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,9 +14,12 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { builderApi, ApiError } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 
 const Builder = () => {
+  const { toast } = useToast();
   const [messageInput, setMessageInput] = useState("");
   const [selectedKillChainStage, setSelectedKillChainStage] = useState<string | null>(null);
   const [isCollaborateDialogOpen, setIsCollaborateDialogOpen] = useState(false);
@@ -33,6 +36,10 @@ const Builder = () => {
     projectKeywords: "",
     projectDescription: ""
   });
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [messages, setMessages] = useState<Array<{type: 'user' | 'assistant', message: string, timestamp: string}>>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   
   // Store configurations per kill chain stage
   const [stageConfigurations, setStageConfigurations] = useState<{
@@ -80,6 +87,128 @@ const Builder = () => {
     }));
   };
 
+  const handleSendMessage = async () => {
+    if (!messageInput.trim() || isLoading) return;
+
+    const userMessage = messageInput.trim();
+    setMessageInput("");
+    setIsLoading(true);
+
+    // Add user message to UI
+    setMessages(prev => [...prev, {
+      type: 'user',
+      message: userMessage,
+      timestamp: new Date().toISOString()
+    }]);
+
+    try {
+      const response = await builderApi.sendMessage(projectId, userMessage, sessionId, stageConfigurations);
+      
+      if (response.sessionId) {
+        setSessionId(response.sessionId);
+      }
+
+      // Add assistant response to UI
+      if (response.response) {
+        setMessages(prev => [...prev, {
+          type: 'assistant',
+          message: response.response,
+          timestamp: new Date().toISOString()
+        }]);
+      }
+
+      if (response.suggestions && response.suggestions.length > 0) {
+        toast({
+          title: "Suggestions",
+          description: response.suggestions.join(", "),
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof ApiError ? error.message : "Failed to send message";
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRunForecast = async () => {
+    if (Object.keys(stageConfigurations).length === 0) {
+      toast({
+        title: "Configuration Required",
+        description: "Please configure at least one kill chain stage before running the forecast.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const result = await builderApi.runBuilder(projectId, stageConfigurations, messageInput);
+      
+      toast({
+        title: "Forecast Generated",
+        description: `Forecast ID: ${result.forecastId}`,
+      });
+
+      // You can navigate to a results view or display the results here
+      console.log("Forecast results:", result);
+    } catch (error) {
+      const errorMessage = error instanceof ApiError ? error.message : "Failed to run forecast";
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSaveProject = async () => {
+    if (!publishForm.name || !publishForm.publisherName) {
+      toast({
+        title: "Required Fields",
+        description: "Please fill in all required fields.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const result = await builderApi.createProject(
+        publishForm.name,
+        stageConfigurations,
+        messages.map(m => ({
+          timestamp: m.timestamp,
+          message: m.message,
+          // Backend expects 'system' but frontend uses 'assistant'
+          type: m.type === 'assistant' ? 'system' : m.type
+        }))
+      );
+
+      setProjectId(result.projectId);
+      setIsPublishDialogOpen(false);
+      toast({
+        title: "Project Saved",
+        description: "Your project has been saved successfully.",
+      });
+    } catch (error) {
+      const errorMessage = error instanceof ApiError ? error.message : "Failed to save project";
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Top Toolbar */}
@@ -88,9 +217,34 @@ const Builder = () => {
           <FileText className="h-4 w-4" />
           New
         </Button>
-        <Button variant="ghost" size="sm" className="gap-2" onClick={() => setIsPublishDialogOpen(true)}>
+        <Button 
+          variant="ghost" 
+          size="sm" 
+          className="gap-2" 
+          onClick={() => setIsPublishDialogOpen(true)}
+          disabled={isLoading}
+        >
           <Save className="h-4 w-4" />
-          Publish
+          {projectId ? "Update" : "Save"} Project
+        </Button>
+        <Button 
+          variant="default" 
+          size="sm" 
+          className="gap-2"
+          onClick={handleRunForecast}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Running...
+            </>
+          ) : (
+            <>
+              <Send className="h-4 w-4" />
+              Run Forecast
+            </>
+          )}
         </Button>
         <Button variant="ghost" size="sm" className="gap-2">
           <Download className="h-4 w-4" />
@@ -264,12 +418,43 @@ const Builder = () => {
           {/* Messages Area */}
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-4xl mx-auto">
-              <div className="text-center space-y-4 py-12">
-                <h2 className="text-2xl font-semibold text-foreground">Build Your Forecast</h2>
-                <p className="text-muted-foreground">
-                  Describe what you want to forecast, upload data, or ask questions to get started
-                </p>
-              </div>
+              {messages.length === 0 ? (
+                <div className="text-center space-y-4 py-12">
+                  <h2 className="text-2xl font-semibold text-foreground">Build Your Forecast</h2>
+                  <p className="text-muted-foreground">
+                    Describe what you want to forecast, upload data, or ask questions to get started
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {messages.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[80%] rounded-lg p-4 ${
+                          msg.type === 'user'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted text-foreground'
+                        }`}
+                      >
+                        <p className="text-sm whitespace-pre-wrap">{msg.message}</p>
+                        <p className="text-xs mt-2 opacity-70">
+                          {new Date(msg.timestamp).toLocaleTimeString()}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  {isLoading && (
+                    <div className="flex justify-start">
+                      <div className="bg-muted rounded-lg p-4">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -285,10 +470,10 @@ const Builder = () => {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        // Handle send message
-                        setMessageInput("");
+                        handleSendMessage();
                       }
                     }}
+                    disabled={isLoading}
                     className="pr-12 min-h-[44px] resize-none"
                   />
                   <Button
@@ -314,15 +499,14 @@ const Builder = () => {
                 </div>
                 <Button
                   className="h-11 px-6"
-                  onClick={() => {
-                    if (messageInput.trim()) {
-                      // Handle send message
-                      console.log('Sending:', messageInput);
-                      setMessageInput("");
-                    }
-                  }}
+                  onClick={handleSendMessage}
+                  disabled={!messageInput.trim() || isLoading}
                 >
-                  <Send className="h-4 w-4" />
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground mt-2 text-center">
@@ -556,15 +740,17 @@ const Builder = () => {
               Cancel
             </Button>
             <Button
-              onClick={() => {
-                // Handle form submission here
-                console.log("Publish form submitted:", publishForm);
-                setIsPublishDialogOpen(false);
-                setPublishForm({ name: "", publisherName: "", projectKeywords: "", projectDescription: "" });
-              }}
-              disabled={!publishForm.name || !publishForm.publisherName || !publishForm.projectKeywords || !publishForm.projectDescription}
+              onClick={handleSaveProject}
+              disabled={!publishForm.name || !publishForm.publisherName || !publishForm.projectKeywords || !publishForm.projectDescription || isLoading}
             >
-              Publish
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save Project"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
