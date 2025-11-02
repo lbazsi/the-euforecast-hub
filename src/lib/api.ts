@@ -166,6 +166,16 @@ export const dbnApi = {
   },
 };
 
+// Forecasts-specific API calls
+export const forecastsApi = {
+  async generate(prompt: string, stageConfigs: any = {}) {
+    return api.post('/forecasts/generate', {
+      prompt,
+      stage_configs: stageConfigs,
+    });
+  },
+};
+
 // Builder-specific API calls
 export const builderApi = {
   async createProject(name: string, stageConfigurations: any, messageHistory: any[] = []) {
