@@ -31,9 +31,9 @@ def create_app() -> FastAPI:
         """Initialize database models when the app starts."""
         try:
             await init_models()
-            print("Database models initialized successfully")
+            print("✅ Database tables initialized successfully.")
         except Exception as e:
-            print(f"Warning: Database initialization failed: {e}")
+            print("⚠️ Database initialization skipped or failed:", e)
 
     @app.get("/", include_in_schema=False)
     async def root() -> JSONResponse:
