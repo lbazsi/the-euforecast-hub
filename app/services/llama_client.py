@@ -36,80 +36,55 @@ async def get_llama_forecast(prompt: str, stage_configs: dict) -> dict:
         logger.warning("⚠️ Using mock LLAMA response (default endpoint)")
         return _get_mock_response()
     
-    # Build the improved system prompt with context-specific instructions
-    system_prompt = """You are an expert forecasting analyst that creates Dynamic Bayesian Network (DBN) structures from scenario descriptions.
+    # Build the improved system prompt with strict uniqueness requirements
+    system_prompt = """You are an expert forecasting analyst constructing a Dynamic Bayesian Network (DBN) representing causal relations in the user's scenario.
 
-CRITICAL: You must generate UNIQUE, CONTEXT-SPECIFIC nodes based ONLY on the user's prompt. DO NOT reuse example nodes or generic patterns from previous requests.
+CRITICAL REQUIREMENTS:
+1. Generate UNIQUE, CONTEXT-SPECIFIC nodes and edges for each prompt.
+2. DO NOT reuse example nodes like 'Food Prices Rise' or 'Civil Unrest Increases'.
+3. Extract entities and causal factors directly from the prompt text.
+4. Include 3–8 nodes and 2–6 edges.
+5. Each node must include:
+   - id: short unique code (e.g., TEC_01, POL_02, SOC_03, ECO_04, ENV_05)
+   - label: concise entity name specific to the user's prompt
+   - domain: one of [Environment, Economy, Society, Policy, Technology]
+   - stage: one of [Reconnaissance, Weaponization, Delivery, Exploitation, Installation, Command & Control (C2), Actions on Objectives]
+   - impact: float 0.0-1.0
+   - confidence: float 0.0-1.0
+6. Each edge must include:
+   - source and target (node ids)
+   - stage_transition: format "Stage1→Stage2" using Unicode arrow → (not ->)
+   - strength_hint: float 0.0-1.0
+   - llm_confidence: float 0.0-1.0
 
-Your task: Analyze the user's scenario prompt and extract the SPECIFIC entities, events, and causal relationships mentioned. Create nodes and edges that reflect ONLY the ACTUAL content of their prompt.
+IMPORTANT: Read the user's prompt carefully and create nodes that match EXACTLY what they describe. If they mention "AI becomes president", create nodes about AI governance and leadership, NOT generic economic or social trends.
 
-Kill chain stages (in order):
-["Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control (C2)","Actions on Objectives"]
-
-Domain categories:
-- Economy: markets, prices, GDP, trade, inflation, employment, currency, investments
-- Environment: climate, weather, natural disasters, resources, pollution, sustainability
-- Society: population, health, migration, education, social unrest, demographics
-- Policy: regulations, laws, government actions, subsidies, taxes, international relations
-- Technology: innovation, infrastructure, automation, digital services, cybersecurity
-
-Required JSON format:
+Example:
+Prompt: "What if an AI becomes president?"
+Output:
 {
-  "stage": "string (one of the kill chain stages - choose the most relevant starting stage)",
+  "stage": "Exploitation",
   "nodes": [
-    {
-      "id": "string (unique identifier like ENV_01, ECO_02, SOC_03, POL_04, TEC_05)",
-      "label": "string (specific name extracted from the user's scenario, e.g., 'Renewable Energy Adoption' not 'Energy')",
-      "domain": "string (Economy, Society, Environment, Policy, or Technology)",
-      "stage": "string (one of the kill chain stages above - REQUIRED)",
-      "impact": 0.0-1.0,
-      "confidence": 0.0-1.0
-    }
+    {"id": "TEC_01", "label": "AI Leadership", "domain": "Technology", "stage": "Delivery", "impact": 0.8, "confidence": 0.85},
+    {"id": "POL_01", "label": "Automated Governance", "domain": "Policy", "stage": "Exploitation", "impact": 0.7, "confidence": 0.75},
+    {"id": "SOC_01", "label": "Public Trust in AI", "domain": "Society", "stage": "Delivery", "impact": 0.6, "confidence": 0.7}
   ],
   "edges": [
-    {
-      "source": "node_id",
-      "target": "node_id",
-      "sign": "+" or "-",
-      "strength": 0.0-1.0,
-      "stage_transition": "Reconnaissance→Weaponization" (REQUIRED - use Unicode arrow →, not ->),
-      "strength_hint": 0.0-1.0,
-      "llm_confidence": 0.0-1.0
-    }
+    {"source": "TEC_01", "target": "POL_01", "stage_transition": "Delivery→Exploitation", "strength_hint": 0.65, "llm_confidence": 0.8},
+    {"source": "POL_01", "target": "SOC_01", "stage_transition": "Exploitation→Delivery", "strength_hint": 0.55, "llm_confidence": 0.7}
   ]
 }
 
-MANDATORY Rules:
-1. EXTRACT UNIQUE ENTITIES directly from the user's prompt - read their words carefully and create nodes that match their specific scenario
-2. DO NOT reuse labels like "Food Prices", "Civil Unrest", "Crop Yields", or "Drought" unless the user explicitly mentions them
-3. If the user mentions "AI becomes president", create nodes like "AI Leadership", "Automated Governance", "Human-AI Interaction", NOT generic "Technology Policy" or "Society"
-4. If the user mentions specific technologies, policies, events, or actors - use those EXACT concepts in your nodes
-5. Each node MUST include a "stage" field matching one of the kill chain stages
-6. Each edge MUST include "stage_transition" with Unicode arrow → (not ->)
-7. stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization")
-8. Generate 3-8 nodes and 2-6 edges that reflect the CAUSAL RELATIONSHIPS described in the prompt
-9. Use node IDs with domain prefixes: ENV_ for Environment, ECO_ for Economy, SOC_ for Society, POL_ for Policy, TEC_ for Technology
-10. Return ONLY valid JSON, no markdown code blocks, no explanatory text
-11. Think creatively - each prompt should produce a UNIQUE network structure
-
-Example (DO NOT reuse these nodes unless the user mentions them):
-If prompt: "drought reduces crop yields and impacts food prices" → Create "Drought", "Crop Yields", "Food Prices"
-If prompt: "AI becomes president" → Create "AI Leadership", "Automated Decision-Making", "Public Trust in AI", "Political Resistance"
-If prompt: "trade war affects semiconductors" → Create "Trade Restrictions", "Semiconductor Supply", "Tech Manufacturing", "Global Supply Chains"
-
-Remember: Generate NEW nodes for EACH unique prompt. Do not copy patterns from examples."""
+Remember: Generate NEW, UNIQUE nodes for EACH prompt. Do not reuse generic examples."""
     
-    user_content = f"""User Scenario Prompt:
-"{prompt}"
+    user_content = f"""User prompt: {prompt}
 
 Stage Configurations:
 {json.dumps(stage_configs, indent=2) if stage_configs else "{}"}
 
-Task: Analyze the scenario prompt above and generate a DBN structure with nodes and edges that specifically reflect the entities, events, and causal relationships mentioned in that prompt. 
+Analyze the user's prompt above and generate a DBN structure. Extract specific entities and causal relationships mentioned in their scenario. Create unique nodes and edges that directly reflect their prompt content.
 
-Be specific and context-aware - extract the actual concepts from the user's text rather than using generic examples.
-
-Return the JSON structure now:"""
+Return ONLY valid JSON."""
     
     # Prepare Groq API request (OpenAI-compatible format)
     headers = {
