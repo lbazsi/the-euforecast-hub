@@ -15,15 +15,40 @@ engine_kwargs = {
 url_obj = make_url(database_url)
 drivername = url_obj.drivername.lower()
 
-# ``sslmode`` is not a valid argument for SQLite (and other non-PostgreSQL)
-# drivers.  If it sneaks into the URL, strip it before creating the engine.
-if any(key.lower() == "sslmode" for key in url_obj.query) and not drivername.startswith("postgres"):
-    new_query = {
-        key: value
-        for key, value in url_obj.query.items()
-        if key.lower() != "sslmode"
-    }
-    url_obj = url_obj.set(query=new_query)
+# Normalise query parameters so we can safely mutate them.
+original_query_params = dict(url_obj.query.items())
+query_params = dict(original_query_params)
+sslmode_value = None
+
+# ``sslmode`` is not universally supported.  Capture it so we can either
+# translate it (for asyncpg) or drop it (for SQLite/other drivers).
+for key in list(query_params.keys()):
+    if key.lower() == "sslmode":
+        sslmode_value = query_params.pop(key)
+
+if sslmode_value is not None:
+    if drivername.startswith("postgresql+asyncpg"):
+        # ``asyncpg`` expects a boolean ``ssl`` argument rather than ``sslmode``.
+        ssl_normalised = str(sslmode_value).lower()
+        connect_args = engine_kwargs.setdefault("connect_args", {})
+
+        if ssl_normalised in {"disable", "off", "false"}:
+            connect_args["ssl"] = False
+        elif ssl_normalised in {"require", "required", "verify-full", "verify-ca", "true"}:
+            # ``True`` enforces SSL; asyncpg will validate certificates based on
+            # the environment (Neon, Supabase, etc.).
+            connect_args["ssl"] = True
+        else:
+            # For other modes (e.g. ``prefer``/``allow``) we omit the argument,
+            # letting asyncpg pick the default behaviour.
+            connect_args.pop("ssl", None)
+    elif drivername.startswith("postgres"):
+        # Other PostgreSQL drivers (e.g. psycopg) understand ``sslmode`` so we
+        # restore the original value.
+        query_params["sslmode"] = sslmode_value
+
+if query_params != original_query_params:
+    url_obj = url_obj.set(query=query_params)
     database_url = url_obj.render_as_string(hide_password=False)
 
 if drivername.startswith("sqlite"):
