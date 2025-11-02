@@ -184,15 +184,23 @@ async def generate_forecast(
             logger.error(f"get_llama_forecast returned non-dict: {type(raw_llama_json)}")
             raise ValueError(f"LLM returned invalid response type: {type(raw_llama_json)}")
         
-        logger.debug(f"Raw LLM response keys: {list(raw_llama_json.keys())}")
-        logger.debug(f"Raw LLM nodes count: {len(raw_llama_json.get('nodes', []))}")
-        logger.debug(f"Raw LLM edges count: {len(raw_llama_json.get('edges', []))}")
+        logger.info(f"🟣 [NORMALIZATION] Raw LLM response keys: {list(raw_llama_json.keys())}")
+        logger.info(f"🟣 [NORMALIZATION] Raw LLM nodes count: {len(raw_llama_json.get('nodes', []))}")
+        logger.info(f"🟣 [NORMALIZATION] Raw LLM edges count: {len(raw_llama_json.get('edges', []))}")
+        
+        # Log raw node labels to check for uniqueness
+        raw_node_labels = [n.get('label', 'N/A') for n in raw_llama_json.get('nodes', [])]
+        logger.info(f"🟣 [NORMALIZATION] Raw node labels: {raw_node_labels}")
         
         # Normalize LLM response to DBN spec format
         llama_json = normalize_llm_spec(raw_llama_json)
         
-        logger.debug(f"Normalized nodes count: {len(llama_json.get('nodes', []))}")
-        logger.debug(f"Normalized edges count: {len(llama_json.get('edges', []))}")
+        logger.info(f"🟣 [NORMALIZATION] Normalized nodes count: {len(llama_json.get('nodes', []))}")
+        logger.info(f"🟣 [NORMALIZATION] Normalized edges count: {len(llama_json.get('edges', []))}")
+        
+        # Log normalized node labels
+        normalized_node_labels = [n.get('label', 'N/A') for n in llama_json.get('nodes', [])]
+        logger.info(f"🟣 [NORMALIZATION] Normalized node labels: {normalized_node_labels}")
         
         # Check if fallback was used
         using_fallback = (
