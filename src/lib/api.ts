@@ -10,18 +10,9 @@ function getApiBaseUrl(): string {
   }
   
   // In production (Vercel), backend is deployed separately
-  // The VITE_API_BASE_URL should be set in Vercel environment variables before build
+  // Default to deployed backend URL
   if (import.meta.env.PROD) {
-    // Fallback: This should not be used in production
-    // Log warning to help with debugging
-    console.warn(
-      'VITE_API_BASE_URL not set in production. ' +
-      'Please configure it in Vercel environment variables (Settings → Environment Variables)'
-    );
-    // Try to infer - this is a last resort and likely won't work
-    const host = window.location.host;
-    const protocol = window.location.protocol;
-    return `${protocol}//${host}/api/v1`;
+    return 'https://the-euforecast-hub.vercel.app/api/v1';
   }
   
   // Development: default to localhost
