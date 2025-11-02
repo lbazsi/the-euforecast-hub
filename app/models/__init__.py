@@ -3,9 +3,11 @@ from .collaboration import Collaboration
 from .upload import UploadFileBlob
 from .builder import BuilderProject, BuilderMessage
 from .dbn import DBNModelSpec, DBNModelVersion, ForecastRun
+from .interaction import LLMInteraction
 
 all_models = [
     Forecast, Collaboration, UploadFileBlob,
     BuilderProject, BuilderMessage,
-    DBNModelSpec, DBNModelVersion, ForecastRun
+    DBNModelSpec, DBNModelVersion, ForecastRun,
+    LLMInteraction
 ]

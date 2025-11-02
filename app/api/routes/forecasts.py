@@ -3,11 +3,14 @@ from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 import logging
+import time
 from app.core.database import get_session
 from app.models.forecast import Forecast
+from app.models.interaction import LLMInteraction
 from app.schemas.common import SuccessResponse
 from app.utils.responses import error_response
 from app.services.llama_client import get_llama_forecast, normalize_llm_spec
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -97,19 +100,56 @@ async def generate_forecast(
     payload: Dict[str, Any] = Body(...),
     session: AsyncSession = Depends(get_session)
 ):
-    """Generate a forecast using LLaMA and return DBN structure."""
+    """Generate a forecast using LLaMA and return DBN structure.
+    
+    Also stores the interaction for continuous learning and analysis.
+    """
+    start_time = time.time()
+    prompt = payload.get("prompt", "")
+    stage_configs = payload.get("stage_configs", {})
+    user_id = payload.get("user_id")
+    session_id = payload.get("session_id")
+    
+    if not prompt:
+        return error_response("BAD_REQUEST", "Prompt is required", 400)
+    
+    raw_llama_json = None
+    llama_json = None
+    using_fallback = False
+    error_msg = None
+    
     try:
-        prompt = payload.get("prompt", "")
-        stage_configs = payload.get("stage_configs", {})
-        
-        if not prompt:
-            return error_response("BAD_REQUEST", "Prompt is required", 400)
-        
         # Call LLaMA to get forecast structure
         raw_llama_json = await get_llama_forecast(prompt, stage_configs)
         
         # Normalize LLM response to DBN spec format
         llama_json = normalize_llm_spec(raw_llama_json)
+        
+        # Check if fallback was used
+        using_fallback = (
+            raw_llama_json.get("stage") is None or 
+            len(llama_json.get("nodes", [])) == 0 or
+            settings.LLAMA_API_URL == "http://localhost:8000/mock-llama"
+        )
+        
+        # Calculate response time
+        response_time_ms = (time.time() - start_time) * 1000
+        
+        # Store interaction for continuous learning
+        interaction = LLMInteraction(
+            prompt=prompt,
+            stage_configs=stage_configs,
+            llama_output=raw_llama_json,
+            normalized_spec=llama_json,
+            user_id=user_id,
+            session_id=session_id,
+            source="forecasts/generate",
+            response_time_ms=response_time_ms,
+            model_version=settings.LLAMA_MODEL or "llama3",
+            using_fallback=using_fallback
+        )
+        session.add(interaction)
+        await session.commit()
         
         # Return the structured response
         return {
@@ -118,9 +158,32 @@ async def generate_forecast(
                 "nodes": llama_json.get("nodes", []),
                 "edges": llama_json.get("edges", []),
                 "stage": raw_llama_json.get("stage", "Reconnaissance"),
-                "using_fallback": raw_llama_json.get("stage") is None or len(llama_json.get("nodes", [])) == 0
+                "using_fallback": using_fallback
             }
         }
     except Exception as e:
+        error_msg = str(e)
         logger.error(f"Failed to generate forecast: {e}", exc_info=True)
-        return error_response("GENERATION_ERROR", f"Failed to generate forecast: {str(e)}", 500)
+        
+        # Store failed interaction for analysis
+        try:
+            response_time_ms = (time.time() - start_time) * 1000
+            interaction = LLMInteraction(
+                prompt=prompt,
+                stage_configs=stage_configs,
+                llama_output=raw_llama_json or {},
+                normalized_spec=llama_json,
+                user_id=user_id,
+                session_id=session_id,
+                source="forecasts/generate",
+                response_time_ms=response_time_ms,
+                model_version=settings.LLAMA_MODEL or "llama3",
+                using_fallback=True,
+                error_message=error_msg
+            )
+            session.add(interaction)
+            await session.commit()
+        except Exception as store_error:
+            logger.warning(f"Failed to store interaction: {store_error}")
+        
+        return error_response("GENERATION_ERROR", f"Failed to generate forecast: {error_msg}", 500)
