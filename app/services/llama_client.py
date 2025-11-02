@@ -2,6 +2,7 @@ import httpx
 from app.core.config import settings
 import logging
 import json
+import re
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -188,9 +189,10 @@ Generate a DBN graph structure in the required JSON format. Return only the JSON
         full_prompt = f"{system_prompt}\n\n{user_content}"
         
         ollama_payload = {
-            "model": settings.LLAMA_MODEL,
+            "model": settings.LLAMA_MODEL or "llama3",
             "prompt": full_prompt,
             "stream": False,
+            "options": {"temperature": 0.7},
             "format": "json"  # Request JSON response format
         }
         
@@ -207,10 +209,12 @@ Generate a DBN graph structure in the required JSON format. Return only the JSON
                 content = data.get("response", "")
                 if not content:
                     logger.error("Empty response from Ollama API")
+                    logger.debug(f"Full Ollama response: {data}")
                     return _get_mock_response()
                 
-                # Parse JSON from response (may need to extract JSON from markdown code blocks)
+                # Parse JSON from response with robust extraction
                 content = content.strip()
+                
                 # Remove markdown code blocks if present
                 if content.startswith("```json"):
                     content = content[7:]
@@ -220,14 +224,36 @@ Generate a DBN graph structure in the required JSON format. Return only the JSON
                     content = content[:-3]
                 content = content.strip()
                 
+                # Try direct JSON parsing first
+                llama_json = None
                 try:
                     llama_json = json.loads(content)
-                    logger.info("Successfully received response from Ollama API")
+                    logger.info("Successfully parsed JSON from Ollama response")
                     return llama_json
                 except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse JSON from Ollama response: {e}")
-                    logger.debug(f"Response content: {content[:200]}")
-                    return _get_mock_response()
+                    logger.warning(f"Direct JSON parsing failed: {e}, trying regex extraction")
+                    
+                # Fallback: Extract JSON using regex (look for { ... } pattern)
+                if llama_json is None:
+                    try:
+                        # Match JSON object with balanced braces
+                        match = re.search(r"\{.*\}", content, re.DOTALL)
+                        if match:
+                            json_str = match.group(0)
+                            llama_json = json.loads(json_str)
+                            logger.info("Successfully extracted JSON using regex fallback")
+                            return llama_json
+                        else:
+                            logger.warning("No JSON object found in Ollama response")
+                            logger.debug(f"Response content (first 500 chars): {content[:500]}")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Regex extraction also failed: {e}")
+                        logger.debug(f"Extracted JSON string: {match.group(0)[:200] if match else 'N/A'}")
+                
+                # If all parsing attempts fail, log and return mock
+                logger.error(f"Failed to parse JSON from Ollama response after all attempts")
+                logger.debug(f"Full response content: {content}")
+                return _get_mock_response()
                     
         except httpx.TimeoutException:
             logger.warning(f"Ollama API timeout at {settings.LLAMA_API_URL}, using mock response")

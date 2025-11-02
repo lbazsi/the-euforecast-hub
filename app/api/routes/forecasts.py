@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, Query
-from typing import Optional
+from fastapi import APIRouter, Depends, Query, Body
+from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+import logging
 from app.core.database import get_session
 from app.models.forecast import Forecast
 from app.schemas.common import SuccessResponse
 from app.utils.responses import error_response
+from app.services.llama_client import get_llama_forecast, normalize_llm_spec
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/forecasts")
@@ -88,3 +91,36 @@ async def create_forecast(payload: ForecastCreate, session: AsyncSession = Depen
     await session.commit()
     await session.refresh(rec)
     return {"success": True, "data": {"id": rec.id, "message": "Forecast published successfully"}}
+
+@router.post("/forecasts/generate")
+async def generate_forecast(
+    payload: Dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Generate a forecast using LLaMA and return DBN structure."""
+    try:
+        prompt = payload.get("prompt", "")
+        stage_configs = payload.get("stage_configs", {})
+        
+        if not prompt:
+            return error_response("BAD_REQUEST", "Prompt is required", 400)
+        
+        # Call LLaMA to get forecast structure
+        raw_llama_json = await get_llama_forecast(prompt, stage_configs)
+        
+        # Normalize LLM response to DBN spec format
+        llama_json = normalize_llm_spec(raw_llama_json)
+        
+        # Return the structured response
+        return {
+            "success": True,
+            "data": {
+                "nodes": llama_json.get("nodes", []),
+                "edges": llama_json.get("edges", []),
+                "stage": raw_llama_json.get("stage", "Reconnaissance"),
+                "using_fallback": raw_llama_json.get("stage") is None or len(llama_json.get("nodes", [])) == 0
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate forecast: {e}", exc_info=True)
+        return error_response("GENERATION_ERROR", f"Failed to generate forecast: {str(e)}", 500)

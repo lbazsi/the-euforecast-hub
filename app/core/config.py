@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     DATABASE_URL: str = "sqlite+aiosqlite:///./forecast_hub.db"
     LLAMA_API_URL: str = "http://localhost:8000/mock-llama"
-    LLAMA_MODEL: Optional[str] = None
+    LLAMA_MODEL: Optional[str] = "llama3"
     LLAMA_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
     # Make CORS_ORIGINS a string to avoid JSON parsing
