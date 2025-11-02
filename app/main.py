@@ -39,6 +39,10 @@ def create_app() -> FastAPI:
     async def favicon() -> Response:
         return Response(status_code=204)
 
+    @app.get("/favicon.png", include_in_schema=False)
+    async def favicon_png() -> Response:
+        return Response(status_code=204)
+
     @app.get(f"{prefix}/health")
     async def health():
         return {"success": True, "data": {"status": "ok"}}
