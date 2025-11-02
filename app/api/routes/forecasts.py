@@ -68,7 +68,7 @@ async def get_forecast(id: str, session: AsyncSession = Depends(get_session)):
         "projectDescription": r.project_description,
         "status": r.status,
         "category": r.category,
-        "metadata": r.metadata,
+        "metadata": r.meta_data,
         "createdAt": r.created_at.isoformat(),
         "updatedAt": r.updated_at.isoformat() if r.updated_at else r.created_at.isoformat()
     }}
@@ -82,7 +82,7 @@ async def create_forecast(payload: ForecastCreate, session: AsyncSession = Depen
         publisher_name=payload.publisherName,
         project_keywords=payload.projectKeywords,
         project_description=payload.projectDescription,
-        metadata=payload.metadata or {}
+        meta_data=payload.metadata or {}
     )
     session.add(rec)
     await session.commit()

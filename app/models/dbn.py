@@ -2,6 +2,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String, DateTime, func
 from sqlalchemy.dialects.postgresql import JSONB
 from app.core.database import Base
+from datetime import datetime
 import uuid
 
 class DBNModelSpec(Base):
@@ -9,7 +10,7 @@ class DBNModelSpec(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     spec: Mapped[dict] = mapped_column(JSONB, default=dict)  # validated LLM JSON
     settings: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_at: Mapped = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class DBNModelVersion(Base):
     __tablename__ = "dbn_versions"
@@ -17,7 +18,7 @@ class DBNModelVersion(Base):
     spec_id: Mapped[str] = mapped_column(String, nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, default=dict)  # learned CPDs
     metrics: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_at: Mapped = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class ForecastRun(Base):
     __tablename__ = "forecast_runs"
@@ -25,4 +26,4 @@ class ForecastRun(Base):
     model_version_id: Mapped[str] = mapped_column(String, nullable=False)
     evidence: Mapped[dict] = mapped_column(JSONB, default=dict)
     results: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_at: Mapped = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
