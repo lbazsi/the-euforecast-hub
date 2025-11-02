@@ -32,7 +32,6 @@ if sslmode_value is not None:
         # ``asyncpg`` expects a boolean ``ssl`` argument rather than ``sslmode``.
         ssl_normalised = str(sslmode_value).lower()
         connect_args = engine_kwargs.setdefault("connect_args", {})
-@@ -35,53 +36,60 @@ if sslmode_value is not None:
         if ssl_normalised in {"disable", "off", "false"}:
             connect_args["ssl"] = False
         elif ssl_normalised in {"require", "required", "verify-full", "verify-ca", "true"}:
@@ -58,14 +57,7 @@ if drivername.startswith("sqlite"):
 engine = create_async_engine(database_url, **engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
-
-class Base(DeclarativeBase):
-    __allow_unmapped__ = True  # Allow legacy type annotations
-
-
-# Create a database-agnostic JSON type that works with both PostgreSQL (JSONB) and SQLite (JSON)
-def get_json_type():
-    """Return JSONB for PostgreSQL, JSON for SQLite and other databases."""
+@@ -69,26 +68,26 @@ def get_json_type():
     db_url = settings.DATABASE_URL.lower()
     if "postgresql" in db_url or "postgres" in db_url:
         return JSONB
