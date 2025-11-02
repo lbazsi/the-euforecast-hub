@@ -18,8 +18,54 @@ KILLCHAIN_STAGES = [
     "Actions on Objectives"
 ]
 
-async def get_llama_forecast(prompt: str, stage_configs: dict) -> dict:
-    """Send prompt to Groq LLaMA API and parse JSON response."""
+def _is_generic(label: str) -> bool:
+    """Detect fallback-style generic labels."""
+    generic = ["Food Prices Rise", "Civil Unrest Increases", "Crop Yields", "Drought"]
+    return any(g.lower() in label.lower() for g in generic)
+
+def _contains_generic_nodes(nodes):
+    """Check if nodes contain generic fallback patterns."""
+    return any(_is_generic(n.get("label", "")) for n in nodes or [])
+
+def _build_prompt(user_prompt: str, stage_configs: dict = None) -> str:
+    """Construct strict JSON-only Groq prompt."""
+    stage_config_str = json.dumps(stage_configs, indent=2) if stage_configs else "{}"
+    
+    return f"""You are an expert forecasting analyst. Create a Dynamic Bayesian Network (DBN) from the user's scenario description below.
+
+REQUIREMENTS:
+1. Output MUST be valid JSON, no markdown or prose.
+2. Generate 3–8 UNIQUE, CONTEXT-SPECIFIC nodes derived directly from the prompt.
+3. Each node must include: id, label, domain, stage, impact (0.0-1.0), confidence (0.0-1.0).
+4. Domains: Environment, Economy, Society, Policy, Technology.
+5. Stages: Reconnaissance, Weaponization, Delivery, Exploitation, Installation, Command & Control (C2), Actions on Objectives.
+6. Include 2–6 causal edges with source, target, stage_transition (format "Stage1→Stage2" using →), strength_hint (0-1), llm_confidence (0-1).
+7. Do NOT use generic or placeholder nodes like "Food Prices Rise" or "Civil Unrest Increases".
+8. Reflect only the entities actually implied by the user scenario.
+
+Example for the prompt "What if an AI becomes president?":
+{{
+  "stage": "Exploitation",
+  "nodes": [
+    {{"id": "TEC_01", "label": "AI Leadership", "domain": "Technology", "stage": "Delivery", "impact": 0.8, "confidence": 0.85}},
+    {{"id": "POL_01", "label": "Automated Governance", "domain": "Policy", "stage": "Exploitation", "impact": 0.7, "confidence": 0.75}},
+    {{"id": "SOC_01", "label": "Public Trust in AI", "domain": "Society", "stage": "Delivery", "impact": 0.6, "confidence": 0.7}}
+  ],
+  "edges": [
+    {{"source": "TEC_01", "target": "POL_01", "stage_transition": "Delivery→Exploitation", "strength_hint": 0.65, "llm_confidence": 0.8}},
+    {{"source": "POL_01", "target": "SOC_01", "stage_transition": "Exploitation→Delivery", "strength_hint": 0.55, "llm_confidence": 0.7}}
+  ]
+}}
+
+User prompt: {user_prompt}
+
+Stage Configurations:
+{stage_config_str}
+
+Return ONLY valid JSON."""
+
+async def get_llama_forecast(prompt: str, stage_configs: dict = None) -> dict:
+    """Send scenario prompt to Groq LLaMA-3 and normalize response."""
     
     # Log the received prompt
     logger.info(f"🟡 [LLAMA_CLIENT] get_llama_forecast called with prompt: '{prompt}'")
@@ -36,151 +82,111 @@ async def get_llama_forecast(prompt: str, stage_configs: dict) -> dict:
         logger.warning("⚠️ Using mock LLAMA response (default endpoint)")
         return _get_mock_response()
     
-    # Build the improved system prompt with strict uniqueness requirements
-    system_prompt = """You are an expert forecasting analyst constructing a Dynamic Bayesian Network (DBN) representing causal relations in the user's scenario.
-
-CRITICAL REQUIREMENTS:
-1. Generate UNIQUE, CONTEXT-SPECIFIC nodes and edges for each prompt.
-2. DO NOT reuse example nodes like 'Food Prices Rise' or 'Civil Unrest Increases'.
-3. Extract entities and causal factors directly from the prompt text.
-4. Include 3–8 nodes and 2–6 edges.
-5. Each node must include:
-   - id: short unique code (e.g., TEC_01, POL_02, SOC_03, ECO_04, ENV_05)
-   - label: concise entity name specific to the user's prompt
-   - domain: one of [Environment, Economy, Society, Policy, Technology]
-   - stage: one of [Reconnaissance, Weaponization, Delivery, Exploitation, Installation, Command & Control (C2), Actions on Objectives]
-   - impact: float 0.0-1.0
-   - confidence: float 0.0-1.0
-6. Each edge must include:
-   - source and target (node ids)
-   - stage_transition: format "Stage1→Stage2" using Unicode arrow → (not ->)
-   - strength_hint: float 0.0-1.0
-   - llm_confidence: float 0.0-1.0
-
-IMPORTANT: Read the user's prompt carefully and create nodes that match EXACTLY what they describe. If they mention "AI becomes president", create nodes about AI governance and leadership, NOT generic economic or social trends.
-
-Example:
-Prompt: "What if an AI becomes president?"
-Output:
-{
-  "stage": "Exploitation",
-  "nodes": [
-    {"id": "TEC_01", "label": "AI Leadership", "domain": "Technology", "stage": "Delivery", "impact": 0.8, "confidence": 0.85},
-    {"id": "POL_01", "label": "Automated Governance", "domain": "Policy", "stage": "Exploitation", "impact": 0.7, "confidence": 0.75},
-    {"id": "SOC_01", "label": "Public Trust in AI", "domain": "Society", "stage": "Delivery", "impact": 0.6, "confidence": 0.7}
-  ],
-  "edges": [
-    {"source": "TEC_01", "target": "POL_01", "stage_transition": "Delivery→Exploitation", "strength_hint": 0.65, "llm_confidence": 0.8},
-    {"source": "POL_01", "target": "SOC_01", "stage_transition": "Exploitation→Delivery", "strength_hint": 0.55, "llm_confidence": 0.7}
-  ]
-}
-
-Remember: Generate NEW, UNIQUE nodes for EACH prompt. Do not reuse generic examples."""
-    
-    user_content = f"""User prompt: {prompt}
-
-Stage Configurations:
-{json.dumps(stage_configs, indent=2) if stage_configs else "{}"}
-
-Analyze the user's prompt above and generate a DBN structure. Extract specific entities and causal relationships mentioned in their scenario. Create unique nodes and edges that directly reflect their prompt content.
-
-Return ONLY valid JSON."""
-    
-    # Prepare Groq API request (OpenAI-compatible format)
     headers = {
         "Authorization": f"Bearer {settings.LLAMA_API_KEY}",
         "Content-Type": "application/json",
     }
-    
+
     payload = {
         "model": settings.LLAMA_MODEL or "llama-3.1-70b-versatile",
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content}
+            {"role": "system", "content": "You output Dynamic Bayesian Network structures in JSON only."},
+            {"role": "user", "content": _build_prompt(prompt, stage_configs)},
         ],
         "temperature": 0.8,
         "top_p": 0.9,
         "max_tokens": 2000,
         "response_format": {"type": "json_object"}  # Request JSON response
     }
-    
-    # Log the request details
-    logger.info(f"🟠 [GROQ] Sending prompt to Groq API")
-    logger.info(f"🟠 [GROQ] URL: {settings.LLAMA_API_URL}")
-    logger.info(f"🟠 [GROQ] Model: {payload['model']}")
-    logger.info(f"🟠 [GROQ] User prompt: '{prompt[:100]}{'...' if len(prompt) > 100 else ''}'")
-    
+
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                settings.LLAMA_API_URL,
-                json=payload,
-                headers=headers
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            logger.info(f"🟠 [GROQ] Sending prompt to Groq API")
+            logger.info(f"🟠 [GROQ] URL: {settings.LLAMA_API_URL}")
+            logger.info(f"🟠 [GROQ] Model: {payload['model']}")
+            logger.info(f"🟠 [GROQ] User prompt: '{prompt[:100]}{'...' if len(prompt) > 100 else ''}'")
             
-            # Log the raw response for debugging
-            logger.info(f"🔴 [GROQ RESPONSE] Received response, status: {resp.status_code}")
-            
-            # Extract content from Groq response (OpenAI-compatible format)
+            r = await client.post(settings.LLAMA_API_URL, json=payload, headers=headers)
+            r.raise_for_status()
+            data = r.json()
             content = data["choices"][0]["message"]["content"]
             
-            if not content:
-                logger.error("❌ Empty response from Groq API")
-                logger.debug(f"Full Groq response: {data}")
-                return _get_mock_response()
-            
-            # Log raw response preview
+            logger.info(f"🔴 [GROQ RESPONSE] Received response, status: {r.status_code}")
             logger.info(f"🔴 [GROQ RESPONSE] Raw response preview (first 300 chars): {content[:300]}")
-            logger.info(f"🔴 [GROQ RESPONSE] Response length: {len(content)} chars")
             
-            # Try to extract JSON from the response
-            llama_json = None
-            try:
-                # Try direct JSON parsing first
-                llama_json = json.loads(content)
-                logger.info(f"✅ [GROQ RESPONSE] Successfully parsed JSON from Groq response")
-            except json.JSONDecodeError as e:
-                logger.warning(f"Direct JSON parsing failed: {e}, trying regex extraction")
-                # Fallback: Extract JSON using regex
-                match = re.search(r"\{.*\}", content, re.DOTALL)
-                if match:
-                    try:
-                        llama_json = json.loads(match.group(0))
-                        logger.info(f"✅ [GROQ RESPONSE] Successfully extracted JSON using regex fallback")
-                    except json.JSONDecodeError as e2:
-                        logger.error(f"Regex extraction also failed: {e2}")
-                        logger.debug(f"Extracted JSON string: {match.group(0)[:200] if match else 'N/A'}")
-                else:
-                    logger.warning("No JSON object found in Groq response")
-                    logger.debug(f"Response content (first 500 chars): {content[:500]}")
-            
-            if not llama_json:
-                logger.warning("No valid JSON returned; using fallback.")
-                return _get_mock_response()
-            
-            # Log parsed node information
-            logger.info(f"✅ [GROQ RESPONSE] Parsed nodes count: {len(llama_json.get('nodes', []))}")
-            logger.info(f"✅ [GROQ RESPONSE] Parsed edges count: {len(llama_json.get('edges', []))}")
-            node_labels = [n.get('label', 'N/A') for n in llama_json.get('nodes', [])[:5]]
-            logger.info(f"✅ [GROQ RESPONSE] First 5 node labels: {node_labels}")
-            
-            # Return the parsed JSON directly (normalization happens in forecasts.py)
-            return llama_json
-            
-    except httpx.TimeoutException:
-        logger.warning(f"Groq API timeout at {settings.LLAMA_API_URL}, using mock response")
-        return _get_mock_response()
-    except httpx.HTTPStatusError as e:
-        logger.warning(f"Groq API HTTP error {e.response.status_code}: {e.response.text}, using mock response")
-        return _get_mock_response()
-    except httpx.RequestError as e:
-        logger.warning(f"Groq API request failed: {e}, using mock response")
-        return _get_mock_response()
     except Exception as e:
-        logger.warning(f"Groq API error: {e}, using mock response", exc_info=True)
-        return _get_mock_response()
+        logger.warning(f"Groq API request failed: {e}", exc_info=True)
+        return {"stage": "Error", "nodes": [], "edges": [], "using_fallback": True}
+
+    # Try to parse JSON
+    parsed = None
+    try:
+        parsed = json.loads(content)
+        logger.info("✅ [GROQ RESPONSE] Successfully parsed JSON from Groq response")
+    except json.JSONDecodeError:
+        logger.warning("Direct JSON parsing failed, trying regex extraction")
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+                logger.info("✅ [GROQ RESPONSE] Successfully extracted JSON using regex fallback")
+            except json.JSONDecodeError as e2:
+                logger.error(f"Regex extraction also failed: {e2}")
+        else:
+            logger.warning("No JSON object found in Groq response")
+            logger.debug(f"Response content (first 500 chars): {content[:500]}")
+    
+    if not parsed:
+        logger.warning("❗ No valid JSON; returning empty structure.")
+        return {"stage": "Error", "nodes": [], "edges": [], "using_fallback": True}
+
+    # Normalize the response
+    normalized = normalize_llm_spec(parsed)
+    
+    # Log parsed node information
+    logger.info(f"✅ [GROQ RESPONSE] Parsed nodes count: {len(normalized.get('nodes', []))}")
+    logger.info(f"✅ [GROQ RESPONSE] Parsed edges count: {len(normalized.get('edges', []))}")
+    node_labels = [n.get('label', 'N/A') for n in normalized.get('nodes', [])[:5]]
+    logger.info(f"✅ [GROQ RESPONSE] First 5 node labels: {node_labels}")
+
+    # Detect generic fallback pattern and retry once if detected
+    if _contains_generic_nodes(normalized.get("nodes")):
+        logger.warning("⚠️ Generic fallback detected; retrying once with higher temperature.")
+        
+        # Retry once with slightly higher temperature
+        payload["temperature"] = 0.9
+        try:
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                logger.info("🟠 [GROQ RETRY] Retrying with temperature 0.9")
+                r = await client.post(settings.LLAMA_API_URL, json=payload, headers=headers)
+                r.raise_for_status()
+                data = r.json()
+                content = data["choices"][0]["message"]["content"]
+                
+                # Parse retry response
+                try:
+                    parsed = json.loads(content)
+                except json.JSONDecodeError:
+                    match = re.search(r"\{.*\}", content, re.DOTALL)
+                    if match:
+                        parsed = json.loads(match.group(0))
+                
+                if parsed:
+                    normalized = normalize_llm_spec(parsed)
+                    node_labels_retry = [n.get('label', 'N/A') for n in normalized.get('nodes', [])[:5]]
+                    logger.info(f"✅ [GROQ RETRY] Retry node labels: {node_labels_retry}")
+                    
+                    # Check if retry still has generic nodes
+                    if _contains_generic_nodes(normalized.get("nodes")):
+                        logger.warning("⚠️ Retry still returned generic nodes; using result anyway.")
+                    else:
+                        logger.info("✅ [GROQ RETRY] Retry succeeded with unique nodes")
+        except Exception as e:
+            logger.warning(f"Retry failed: {e}")
+
+    logger.info(f"✅ [GROQ RESPONSE] Final normalized nodes: {[n.get('label', 'N/A') for n in normalized.get('nodes', [])]}")
+    normalized["using_fallback"] = False
+    return normalized
 
 def normalize_llm_spec(raw: dict) -> dict:
     """
