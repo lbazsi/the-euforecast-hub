@@ -21,14 +21,20 @@ KILLCHAIN_STAGES = [
 async def get_llama_forecast(prompt: str, stage_configs: dict) -> dict:
     """Call LLM API (Groq, Ollama, or custom) for forecast generation."""
     
+    # Log the received prompt
+    logger.info(f"🟡 [LLAMA_CLIENT] get_llama_forecast called with prompt: '{prompt}'")
+    logger.info(f"🟡 [LLAMA_CLIENT] LLAMA_API_URL: {settings.LLAMA_API_URL}")
+    
     # Skip API call if URL is the default mock endpoint
     if settings.LLAMA_API_URL == "http://localhost:8000/mock-llama":
-        logger.info("Using mock LLAMA response (default endpoint)")
+        logger.warning("⚠️ Using mock LLAMA response (default endpoint)")
         return _get_mock_response()
     
     # Check API type
     is_groq = "api.groq.com" in settings.LLAMA_API_URL
     is_ollama = "/api/generate" in settings.LLAMA_API_URL or "11434" in settings.LLAMA_API_URL
+    
+    logger.info(f"🟡 [LLAMA_CLIENT] API type - Groq: {is_groq}, Ollama: {is_ollama}")
     
     if is_groq:
         if not settings.GROQ_API_KEY:
@@ -245,6 +251,11 @@ Return the JSON structure now:"""
         # Combine into a single prompt for Ollama
         full_prompt = f"{system_prompt}\n\n{user_content}"
         
+        # Log the actual prompt being sent to LLaMA (first 500 chars)
+        logger.info(f"🟠 [OLLAMA] Sending prompt to LLaMA API (first 500 chars):\n{full_prompt[:500]}")
+        logger.info(f"🟠 [OLLAMA] User prompt in full_prompt: '{prompt}'")
+        logger.info(f"🟠 [OLLAMA] Full prompt length: {len(full_prompt)} chars")
+        
         ollama_payload = {
             "model": settings.LLAMA_MODEL or "llama3",
             "prompt": full_prompt,
@@ -252,6 +263,8 @@ Return the JSON structure now:"""
             "options": {"temperature": 0.8, "top_p": 0.9},  # Higher temperature for more diverse outputs
             "format": "json"  # Request JSON response format
         }
+        
+        logger.info(f"🟠 [OLLAMA] Payload model: {ollama_payload['model']}, URL: {settings.LLAMA_API_URL}")
         
         try:
             async with httpx.AsyncClient(timeout=60) as client:
@@ -262,12 +275,19 @@ Return the JSON structure now:"""
                 resp.raise_for_status()
                 data = resp.json()
                 
+                # Log the raw response for debugging
+                logger.info(f"🔴 [OLLAMA RESPONSE] Received response, status: {resp.status_code}")
+                
                 # Extract response from Ollama format
                 content = data.get("response", "")
                 if not content:
-                    logger.error("Empty response from Ollama API")
+                    logger.error("❌ Empty response from Ollama API")
                     logger.debug(f"Full Ollama response: {data}")
                     return _get_mock_response()
+                
+                # Log raw response preview
+                logger.info(f"🔴 [OLLAMA RESPONSE] Raw response preview (first 300 chars): {content[:300]}")
+                logger.info(f"🔴 [OLLAMA RESPONSE] Response length: {len(content)} chars")
                 
                 # Parse JSON from response with robust extraction
                 content = content.strip()
@@ -285,7 +305,12 @@ Return the JSON structure now:"""
                 llama_json = None
                 try:
                     llama_json = json.loads(content)
-                    logger.info("Successfully parsed JSON from Ollama response")
+                    logger.info(f"✅ [OLLAMA RESPONSE] Successfully parsed JSON from Ollama response")
+                    logger.info(f"✅ [OLLAMA RESPONSE] Parsed nodes count: {len(llama_json.get('nodes', []))}")
+                    logger.info(f"✅ [OLLAMA RESPONSE] Parsed edges count: {len(llama_json.get('edges', []))}")
+                    # Log first few node labels to verify uniqueness
+                    node_labels = [n.get('label', 'N/A') for n in llama_json.get('nodes', [])[:5]]
+                    logger.info(f"✅ [OLLAMA RESPONSE] First 5 node labels: {node_labels}")
                     return llama_json
                 except json.JSONDecodeError as e:
                     logger.warning(f"Direct JSON parsing failed: {e}, trying regex extraction")

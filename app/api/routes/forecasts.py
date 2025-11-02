@@ -163,6 +163,10 @@ async def generate_forecast(
     user_id = payload.get("user_id")
     session_id = payload.get("session_id")
     
+    # Log the received prompt for debugging
+    logger.info(f"🔵 [FORECAST REQUEST] Received prompt from frontend: '{prompt}'")
+    logger.info(f"🔵 [FORECAST REQUEST] Prompt length: {len(prompt)} chars, Stage configs: {list(stage_configs.keys())}")
+    
     if not prompt:
         return error_response("BAD_REQUEST", "Prompt is required", 400)
     
@@ -173,7 +177,7 @@ async def generate_forecast(
     
     try:
         # Call LLaMA to get forecast structure
-        logger.info(f"Generating forecast for prompt: {prompt[:100]}...")
+        logger.info(f"🟢 [LLAMA CALL] Calling get_llama_forecast with prompt: '{prompt[:100]}{'...' if len(prompt) > 100 else ''}'")
         raw_llama_json = await get_llama_forecast(prompt, stage_configs)
         
         if not isinstance(raw_llama_json, dict):
