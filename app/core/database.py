@@ -7,7 +7,7 @@ engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_pre_ping=Tr
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 class Base(DeclarativeBase):
-    pass
+    __allow_unmapped__ = True  # Allow legacy type annotations
 
 async def get_session() -> AsyncSession:
     async with AsyncSessionLocal() as session:

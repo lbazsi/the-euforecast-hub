@@ -2,6 +2,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String, Text, DateTime, func
 from sqlalchemy.dialects.postgresql import JSONB
 from app.core.database import Base
+from datetime import datetime
 import uuid
 
 class Forecast(Base):
@@ -15,5 +16,5 @@ class Forecast(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")
     category: Mapped[str] = mapped_column(String(100), default="general")
     metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_at: Mapped = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
