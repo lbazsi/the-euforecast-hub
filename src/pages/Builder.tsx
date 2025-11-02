@@ -1,11 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { FileText, Save, Download, Eye, HelpCircle, Send, Paperclip, Loader2, Home } from "lucide-react";
+import { FileText, Save, Download, Eye, HelpCircle, Send, Paperclip, Loader2, Home, ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
+import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -15,7 +17,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { builderApi, ApiError } from "@/lib/api";
+import { builderApi, forecastsApi, ApiError } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
 
@@ -42,6 +44,12 @@ const Builder = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<Array<{type: 'user' | 'assistant', message: string, timestamp: string}>>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [forecastResult, setForecastResult] = useState<{
+    nodes: any[];
+    edges: any[];
+    stage: string;
+    using_fallback: boolean;
+  } | null>(null);
   
   // Store configurations per kill chain stage
   const [stageConfigurations, setStageConfigurations] = useState<{
@@ -138,33 +146,79 @@ const Builder = () => {
   };
 
   const handleRunForecast = async () => {
-    if (Object.keys(stageConfigurations).length === 0) {
+    // Use messageInput as prompt, or get latest user message
+    const prompt = messageInput.trim() || 
+      (messages.filter(m => m.type === 'user').slice(-1)[0]?.message) ||
+      "Generate a forecast based on the configured scenario.";
+    
+    if (!prompt) {
       toast({
-        title: "Configuration Required",
-        description: "Please configure at least one kill chain stage before running the forecast.",
+        title: "Prompt Required",
+        description: "Please enter a scenario prompt or message before running the forecast.",
         variant: "destructive",
       });
       return;
     }
 
     setIsLoading(true);
+    setForecastResult(null);
+    
+    // Show loading toast
+    const loadingToast = toast({
+      title: "Generating forecast…",
+      description: "Please wait while we process your scenario.",
+    });
+
     try {
-      const result = await builderApi.runBuilder(projectId, stageConfigurations, messageInput);
+      // Convert stageConfigurations to stage_configs format for API
+      // The API expects stage_configs as domain weights or stage configurations
+      const stageConfigs: Record<string, any> = {};
+      
+      // If we have stage configurations, convert them
+      if (Object.keys(stageConfigurations).length > 0) {
+        Object.keys(stageConfigurations).forEach(stage => {
+          const config = stageConfigurations[stage];
+          if (config.domainWeights) {
+            stageConfigs[stage] = config.domainWeights;
+          }
+        });
+      }
+
+      const res = await forecastsApi.generate(prompt, stageConfigs);
+      
+      if (res.success && res.data) {
+        setForecastResult(res.data);
+        
+        // Console logs for debugging
+        console.log("Nodes:", res.data.nodes);
+        console.log("Edges:", res.data.edges);
+        console.log("Stage:", res.data.stage);
+        console.log("Using fallback:", res.data.using_fallback);
+        
+        // Dismiss loading toast and show success
+        toast({
+          title: "Forecast Generated Successfully!",
+          description: res.data.using_fallback 
+            ? "Forecast generated (using fallback data)" 
+            : `Generated ${res.data.nodes.length} nodes and ${res.data.edges.length} edges.`,
+        });
+      } else {
+        throw new Error("Invalid response from server");
+      }
+    } catch (error) {
+      const errorMessage = error instanceof ApiError 
+        ? `${error.message} (Code: ${error.code})` 
+        : error instanceof Error 
+          ? error.message 
+          : "Failed to generate forecast. Please try again.";
       
       toast({
-        title: "Forecast Generated",
-        description: `Forecast ID: ${result.forecastId}`,
-      });
-
-      // You can navigate to a results view or display the results here
-      console.log("Forecast results:", result);
-    } catch (error) {
-      const errorMessage = error instanceof ApiError ? error.message : "Failed to run forecast";
-      toast({
-        title: "Error",
+        title: "Forecast Failed",
         description: errorMessage,
         variant: "destructive",
       });
+      
+      console.error("Forecast generation error:", error);
     } finally {
       setIsLoading(false);
     }
@@ -467,6 +521,120 @@ const Builder = () => {
                       <div className="bg-muted rounded-lg p-4">
                         <Loader2 className="h-4 w-4 animate-spin" />
                       </div>
+                    </div>
+                  )}
+                  
+                  {/* Forecast Result Display */}
+                  {forecastResult && (
+                    <div className="mt-6 p-6 bg-card border border-border rounded-lg">
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-xl font-semibold text-foreground">Forecast Result</h2>
+                        {forecastResult.using_fallback && (
+                          <Badge variant="secondary" className="text-xs">
+                            Using Fallback
+                          </Badge>
+                        )}
+                      </div>
+                      
+                      <div className="mb-4">
+                        <p className="text-sm text-muted-foreground">
+                          <span className="font-medium">Stage:</span> {forecastResult.stage}
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          <span className="font-medium">Generated:</span> {forecastResult.nodes.length} nodes, {forecastResult.edges.length} edges
+                        </p>
+                      </div>
+
+                      <Collapsible defaultOpen={true} className="space-y-3">
+                        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-muted rounded-md transition-colors">
+                          <h3 className="font-medium text-foreground">Nodes ({forecastResult.nodes.length})</h3>
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="pt-2">
+                          <div className="space-y-2 pl-2">
+                            {forecastResult.nodes.length > 0 ? (
+                              forecastResult.nodes.map((n: any) => (
+                                <div key={n.id} className="p-3 bg-muted/50 rounded-md border border-border/50">
+                                  <div className="flex items-start justify-between">
+                                    <div>
+                                      <p className="font-medium text-foreground">{n.label || n.id}</p>
+                                      <div className="flex gap-2 mt-1">
+                                        <Badge variant="outline" className="text-xs">
+                                          {n.domain || "Unknown"}
+                                        </Badge>
+                                        <Badge variant="outline" className="text-xs">
+                                          {n.stage || "Unknown"}
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                    <Badge variant="secondary" className="text-xs">
+                                      {n.id}
+                                    </Badge>
+                                  </div>
+                                  {(n.impact !== undefined || n.confidence !== undefined) && (
+                                    <div className="flex gap-4 mt-2 text-xs text-muted-foreground">
+                                      {n.impact !== undefined && (
+                                        <span>Impact: {typeof n.impact === 'number' ? n.impact.toFixed(2) : n.impact}</span>
+                                      )}
+                                      {n.confidence !== undefined && (
+                                        <span>Confidence: {typeof n.confidence === 'number' ? n.confidence.toFixed(2) : n.confidence}</span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-sm text-muted-foreground">No nodes generated</p>
+                            )}
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
+
+                      <Collapsible defaultOpen={true} className="space-y-3">
+                        <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-muted rounded-md transition-colors">
+                          <h3 className="font-medium text-foreground">Edges ({forecastResult.edges.length})</h3>
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="pt-2">
+                          <div className="space-y-2 pl-2">
+                            {forecastResult.edges.length > 0 ? (
+                              forecastResult.edges.map((e: any, idx: number) => (
+                                <div key={idx} className="p-3 bg-muted/50 rounded-md border border-border/50">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="secondary" className="text-xs font-mono">
+                                      {e.source}
+                                    </Badge>
+                                    <span className="text-muted-foreground">→</span>
+                                    <Badge variant="secondary" className="text-xs font-mono">
+                                      {e.target}
+                                    </Badge>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2 mt-2 text-xs text-muted-foreground">
+                                    {e.stage_transition && (
+                                      <span className="px-2 py-1 bg-background rounded border border-border">
+                                        {e.stage_transition}
+                                      </span>
+                                    )}
+                                    {e.strength_hint !== undefined && (
+                                      <span>Strength: {typeof e.strength_hint === 'number' ? e.strength_hint.toFixed(2) : e.strength_hint}</span>
+                                    )}
+                                    {e.llm_confidence !== undefined && (
+                                      <span>Confidence: {typeof e.llm_confidence === 'number' ? e.llm_confidence.toFixed(2) : e.llm_confidence}</span>
+                                    )}
+                                    {e.sign && (
+                                      <Badge variant={e.sign === '+' ? 'default' : 'destructive'} className="text-xs">
+                                        {e.sign}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-sm text-muted-foreground">No edges generated</p>
+                            )}
+                          </div>
+                        </CollapsibleContent>
+                      </Collapsible>
                     </div>
                   )}
                 </div>
