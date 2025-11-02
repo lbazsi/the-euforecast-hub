@@ -3,19 +3,26 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import text
 from sqlalchemy.types import TypeDecorator, JSON
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import make_url
 from app.core.config import settings
 
 database_url = settings.DATABASE_URL
-normalized_url = database_url.lower()
-
 engine_kwargs = {
     "echo": False,
     "pool_pre_ping": True,
 }
 
-if normalized_url.startswith("sqlite"):
+url_obj = make_url(database_url)
+
+if url_obj.drivername.startswith("sqlite"):
     # SQLite does not support SSL parameters such as ``sslmode``.
-    # Provide only the arguments it understands to avoid connection errors.
+    # Remove any accidental ``sslmode`` query arguments and provide the
+    # arguments it understands to avoid connection errors.
+    if "sslmode" in url_obj.query:
+        new_query = dict(url_obj.query)
+        new_query.pop("sslmode", None)
+        url_obj = url_obj.set(query=new_query)
+        database_url = url_obj.render_as_string(hide_password=False)
     engine_kwargs["connect_args"] = {"check_same_thread": False}
 
 engine = create_async_engine(database_url, **engine_kwargs)
