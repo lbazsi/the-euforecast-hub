@@ -57,7 +57,12 @@ if drivername.startswith("sqlite"):
 engine = create_async_engine(database_url, **engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
-@@ -69,26 +68,26 @@ def get_json_type():
+
+class Base(DeclarativeBase):
+    pass
+
+
+def get_json_type():
     db_url = settings.DATABASE_URL.lower()
     if "postgresql" in db_url or "postgres" in db_url:
         return JSONB
@@ -74,11 +79,10 @@ async def get_session() -> AsyncSession:
         yield session
 
 
-# Import models for metadata
-from app.models import all_models  # noqa
-
-
 async def init_models():
+    # Import models here to avoid circular imports
+    from app.models import all_models  # noqa
+    
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     # Simple connectivity check

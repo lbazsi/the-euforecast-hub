@@ -8,6 +8,5 @@
   ],
   "env": {
     "PYTHONUNBUFFERED": "1"
-  },
-  "buildCommand": "pip install -r requirements.txt"
+  }
 }
