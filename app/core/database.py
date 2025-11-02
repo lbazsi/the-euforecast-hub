@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import make_url
 from app.core.config import settings
 import asyncio
+import threading
 
 
 database_url = settings.DATABASE_URL
@@ -60,7 +61,8 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 # Flag and lock for lazy initialization (for serverless environments)
 _models_initialized = False
-_init_lock = asyncio.Lock()
+_init_lock_storage = {}  # Store locks per event loop
+_thread_lock = threading.Lock()  # Thread-safe lock to guard async lock creation
 
 
 class Base(DeclarativeBase):
@@ -93,13 +95,27 @@ async def init_models():
     _models_initialized = True
 
 
+def _get_init_lock():
+    """Get or create an asyncio lock for the current event loop."""
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    
+    # Use thread lock to safely access the storage
+    with _thread_lock:
+        if loop_id not in _init_lock_storage:
+            _init_lock_storage[loop_id] = asyncio.Lock()
+        return _init_lock_storage[loop_id]
+
+
 async def ensure_models_initialized():
     """Ensure models are initialized (lazy initialization for serverless)."""
     global _models_initialized
     if _models_initialized:
         return
     
-    async with _init_lock:
+    # Get lock for current event loop
+    init_lock = _get_init_lock()
+    async with init_lock:
         # Check again after acquiring lock (double-check pattern)
         if _models_initialized:
             return
