@@ -12,3 +12,7 @@ async def save_file(session: AsyncSession, filename: str, content_type: str, dat
 async def get_file_by_name(session: AsyncSession, filename: str) -> UploadFileBlob | None:
     q = await session.execute(select(UploadFileBlob).where(UploadFileBlob.filename == filename))
     return q.scalars().first()
+
+async def get_file_by_id(session: AsyncSession, file_id: str) -> UploadFileBlob | None:
+    """Get file by database ID."""
+    return await session.get(UploadFileBlob, file_id)

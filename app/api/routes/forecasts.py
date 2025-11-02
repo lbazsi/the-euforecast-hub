@@ -59,7 +59,7 @@ async def list_forecasts(
 async def get_forecast(id: str, session: AsyncSession = Depends(get_session)):
     r = await session.get(Forecast, id)
     if not r:
-        error_response("NOT_FOUND", "Forecast not found", 404)
+        return error_response("NOT_FOUND", "Forecast not found", 404)
     return {"success": True, "data": {
         "id": r.id,
         "name": r.name,

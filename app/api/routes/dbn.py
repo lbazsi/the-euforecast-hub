@@ -59,13 +59,29 @@ async def dbn_query(
         spec = to_dbn_spec(skel)
         # Phase 3a: build spec
         spec_id, warnings = await build_spec(session, spec, settings={})
-        # Phase 3b: fit (using very small synthetic pseudo data)
-        data_bindings = {
-            "synthetic_case": [
-                {f"{e['source']}@0": 1, f"{e['target']}@1": 1} for e in spec.get("edges", [])[:3]
-            ]
-        }
-        mv_id, metrics = await fit_model(session, spec_id, data_bindings, weights={"pseudo":1.0})
+        
+        # Phase 3b: fit (using stronger synthetic pseudo-training data)
+        edges = spec.get("edges", [])
+        if not edges:
+            return error_response("QUERY_ERROR", "No causal edges were extracted. Try a more explicit scenario.", 400)
+        
+        synthetic = []
+        # Generate positive and negative examples aligned with source@t → target@t+1
+        for e in edges[:4]:
+            s, t = e.get("source"), e.get("target")
+            if s and t:
+                synthetic.append({f"{s}@0": 1, f"{t}@1": 1})  # positive
+                synthetic.append({f"{s}@0": 1, f"{t}@1": 1})  # upweight
+                synthetic.append({f"{s}@0": 1, f"{t}@1": 0})  # negative
+        
+        # Add some noise for targets
+        for e in edges[1:3]:
+            t = e.get("target")
+            if t:
+                synthetic.append({f"{t}@1": 0})  # noise
+        
+        data_bindings = {"synthetic_case": synthetic if synthetic else [{}]}
+        mv_id, metrics = await fit_model(session, spec_id, data_bindings, weights={"synthetic_case": 1.0})
         # Phase 3c: infer
         post, agg = await infer(session, mv_id, evidence={}, interventions={})
         # Phase 4: packaged response
@@ -98,3 +114,29 @@ async def dbn_graph(spec_id: str, session: AsyncSession = Depends(get_session)):
         }}
     except Exception as e:
         return error_response("GRAPH_ERROR", f"Failed to fetch graph: {str(e)}", 500)
+
+@router.get("/dbn/latest/{spec_id}")
+async def dbn_latest_version(spec_id: str, session: AsyncSession = Depends(get_session)):
+    """Get the latest model version for a given spec ID (for debugging)."""
+    try:
+        q = await session.get(DBNModelSpec, spec_id)
+        if not q:
+            return error_response("GRAPH_ERROR", "Spec not found", 404)
+        # Get latest version
+        res = await session.execute(
+            select(DBNModelVersion)
+            .where(DBNModelVersion.spec_id == spec_id)
+            .order_by(desc(DBNModelVersion.created_at))
+        )
+        mv = res.scalars().first()
+        if not mv:
+            return error_response("GRAPH_ERROR", "No model versions found for this spec", 404)
+        return {"success": True, "data": {
+            "spec_id": spec_id,
+            "model_version_id": mv.id,
+            "created_at": mv.created_at.isoformat() if mv.created_at else None,
+            "metrics": mv.metrics or {},
+            "params": mv.params or {}
+        }}
+    except Exception as e:
+        return error_response("GRAPH_ERROR", f"Failed to fetch latest version: {str(e)}", 500)

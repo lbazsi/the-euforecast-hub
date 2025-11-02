@@ -2,8 +2,20 @@ import httpx
 from app.core.config import settings
 import logging
 import json
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
+
+# Kill chain stages for normalization
+KILLCHAIN_STAGES = [
+    "Reconnaissance",
+    "Weaponization",
+    "Delivery",
+    "Exploitation",
+    "Installation",
+    "Command & Control (C2)",
+    "Actions on Objectives"
+]
 
 async def get_llama_forecast(prompt: str, stage_configs: dict) -> dict:
     """Call Groq API (OpenAI-compatible) for forecast generation."""
@@ -26,6 +38,9 @@ async def get_llama_forecast(prompt: str, stage_configs: dict) -> dict:
         system_prompt = """You are a forecasting model generator that creates Dynamic Bayesian Network (DBN) structures.
 Generate a JSON response with nodes and edges representing forecast scenarios.
 
+Kill chain stages (in order):
+["Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control (C2)","Actions on Objectives"]
+
 Required format:
 {
   "stage": "string (one of the kill chain stages)",
@@ -33,9 +48,10 @@ Required format:
     {
       "id": "string (unique identifier like ECO_01, SOC_02)",
       "label": "string (human-readable name)",
+      "domain": "string (Economy, Society, Environment, Policy, Technology)",
+      "stage": "string (one of the kill chain stages above - REQUIRED)",
       "impact": 0.0-1.0,
-      "confidence": 0.0-1.0,
-      "domain": "string (Economy, Society, Environment, Policy, Technology)"
+      "confidence": 0.0-1.0
     }
   ],
   "edges": [
@@ -43,10 +59,18 @@ Required format:
       "source": "node_id",
       "target": "node_id",
       "sign": "+" or "-",
-      "strength": 0.0-1.0
+      "strength": 0.0-1.0,
+      "stage_transition": "Reconnaissance→Weaponization" (REQUIRED - use Unicode arrow →, not ->),
+      "strength_hint": 0.0-1.0,
+      "llm_confidence": 0.0-1.0
     }
   ]
 }
+
+Rules:
+- Each node MUST include "stage" field.
+- Each edge MUST include "stage_transition" with Unicode arrow → (not ->).
+- stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization").
 
 Based on the stage configurations and prompt, generate appropriate nodes and edges."""
         
@@ -126,16 +150,85 @@ Generate a DBN graph structure in the required JSON format."""
             logger.warning(f"LLAMA API error: {e}, using mock response")
             return _get_mock_response()
 
+def normalize_llm_spec(raw: dict) -> dict:
+    """
+    Convert LLM output into the DBN engine's expected shape:
+    - edges[].stage_transition (Unicode arrow)
+    - edges[].strength_hint, edges[].llm_confidence
+    - nodes[].stage
+    """
+    out = {"nodes": [], "edges": []}
+    nodes = raw.get("nodes", [])
+    edges = raw.get("edges", [])
+
+    # Normalize nodes
+    for n in nodes:
+        node_id = n.get("id") or n.get("label", "NODE").upper().replace(" ", "_")
+        out["nodes"].append({
+            "id": node_id,
+            "label": n.get("label", "Unknown"),
+            "domain": n.get("domain", "Environment"),
+            "stage": n.get("stage") or "Reconnaissance",  # default; backfilled below from edges
+            "state_type": "discrete",
+            "state_space": ["low", "med", "high"],
+        })
+
+    # Index
+    node_by_id = {n["id"]: n for n in out["nodes"]}
+
+    # Normalize edges
+    for e in edges:
+        st = e.get("stage_transition", "")
+        st = st.replace("->", "→") if st else ""  # ASCII to Unicode
+
+        edge = {
+            "source": e.get("source"),
+            "target": e.get("target"),
+            "stage_transition": st or "",  # may fill below
+            "strength_hint": float(e.get("strength_hint", e.get("strength", 0.6))),
+            "llm_confidence": float(e.get("llm_confidence", e.get("confidence", 0.7))),
+        }
+        out["edges"].append(edge)
+
+    # Backfill node stages from edge transitions if missing or defaulted
+    for e in out["edges"]:
+        st = e.get("stage_transition", "")
+        if "→" in st:
+            a, b = st.split("→", 1)
+            a = a.strip()
+            b = b.strip()
+            if e["source"] in node_by_id:
+                current_stage = node_by_id[e["source"]].get("stage")
+                if not current_stage or current_stage == "Reconnaissance":
+                    node_by_id[e["source"]]["stage"] = a
+            if e["target"] in node_by_id:
+                current_stage = node_by_id[e["target"]].get("stage")
+                if not current_stage or current_stage == "Reconnaissance":
+                    node_by_id[e["target"]]["stage"] = b
+
+    # Default transitions if still missing (first hop)
+    for e in out["edges"]:
+        if not e["stage_transition"]:
+            src_stage = node_by_id.get(e["source"], {}).get("stage", "Reconnaissance")
+            try:
+                idx = KILLCHAIN_STAGES.index(src_stage)
+            except ValueError:
+                idx = 0
+            a, b = KILLCHAIN_STAGES[idx], KILLCHAIN_STAGES[min(idx+1, len(KILLCHAIN_STAGES)-1)]
+            e["stage_transition"] = f"{a}→{b}"
+
+    return out
+
 def _get_mock_response() -> dict:
     """Deterministic mock response for development/testing."""
     return {
         "stage": "Exploitation",
         "nodes": [
-            {"id":"ECO_04","label":"Food Prices Rise","impact":0.23,"confidence":0.74,"domain":"Economy"},
-            {"id":"SOC_02","label":"Civil Unrest Increases","impact":0.15,"confidence":0.68,"domain":"Society"}
+            {"id":"ECO_04","label":"Food Prices Rise","impact":0.23,"confidence":0.74,"domain":"Economy","stage":"Weaponization"},
+            {"id":"SOC_02","label":"Civil Unrest Increases","impact":0.15,"confidence":0.68,"domain":"Society","stage":"Delivery"}
         ],
         "edges": [
-            {"source":"ECO_04","target":"SOC_02","sign":"+","strength":0.6}
+            {"source":"ECO_04","target":"SOC_02","sign":"+","strength":0.6,"stage_transition":"Weaponization→Delivery"}
         ]
     }
 

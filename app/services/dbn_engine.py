@@ -2,8 +2,11 @@ from __future__ import annotations
 from typing import Dict, Any, Tuple, List, DefaultDict
 from collections import defaultdict
 import numpy as np
+import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.dbn import DBNModelSpec, DBNModelVersion, ForecastRun
+
+logger = logging.getLogger(__name__)
 
 FIXED_STAGES = [
     "Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control (C2)","Actions on Objectives"
@@ -16,23 +19,81 @@ def validate_llm_json(spec: Dict[str, Any]):
     warnings = []
     out = dict(spec)
     out["stages"] = FIXED_STAGES
-    node_ids = {n["id"] for n in out.get("nodes", [])}
-    stage_idx = _idx_stages()
+    
+    # Normalize any ASCII arrow to Unicode
+    for e in out.get("edges", []):
+        st = e.get("stage_transition", "")
+        if st and "->" in st:
+            e["stage_transition"] = st.replace("->", "→")
+            logger.warning(f"Normalized ASCII arrow to Unicode in edge: {e.get('source')} -> {e.get('target')}")
+    
+    # Build node index for stage backfilling
+    node_by_id = {n["id"]: n for n in out.get("nodes", []) if n.get("id")}
+    
+    # Backfill node stages from edges if missing
+    for e in out.get("edges", []):
+        st = e.get("stage_transition", "")
+        if "→" in st:
+            a, b = st.split("→", 1)
+            a = a.strip()
+            b = b.strip()
+            if e.get("source") in node_by_id and (not node_by_id[e["source"]].get("stage") or node_by_id[e["source"]].get("stage") == "Reconnaissance"):
+                node_by_id[e["source"]]["stage"] = a
+                logger.info(f"Backfilled stage '{a}' for node {e.get('source')} from edge transition")
+            if e.get("target") in node_by_id and (not node_by_id[e["target"]].get("stage") or node_by_id[e["target"]].get("stage") == "Reconnaissance"):
+                node_by_id[e["target"]]["stage"] = b
+                logger.info(f"Backfilled stage '{b}' for node {e.get('target')} from edge transition")
+    
+    # Default any remaining nodes to Reconnaissance
     for n in out.get("nodes", []):
+        n.setdefault("stage", "Reconnaissance")
         n.setdefault("state_type", "discrete")
         if n["state_type"] == "discrete" and "state_space" not in n:
-            n["state_space"] = ["low","med","high"]
-        n.setdefault("stage", "Reconnaissance")
+            n["state_space"] = ["low", "med", "high"]
+    
+    # Validate and repair edges (try to repair instead of drop)
+    node_ids = {n["id"] for n in out.get("nodes", []) if n.get("id")}
+    stage_idx = _idx_stages()
+    repaired = []
+    edges_to_remove = []
+    
     for e in out.get("edges", []):
-        st = e.get("stage_transition","")
-        if "→" not in st:
-            warnings.append(f"Edge missing stage_transition: {e}")
-            continue
-        a,b = st.split("→")
-        if stage_idx.get(b,99) - stage_idx.get(a,-99) != 1:
-            warnings.append(f"Invalid stage transition {st}")
+        st = e.get("stage_transition", "")
+        if not st or "→" not in st:
+            # Repair from node stages
+            src_stage = node_by_id.get(e.get("source"), {}).get("stage", "Reconnaissance")
+            try:
+                i = stage_idx[src_stage]
+            except KeyError:
+                i = 0
+            a, b = FIXED_STAGES[i], FIXED_STAGES[min(i+1, len(FIXED_STAGES)-1)]
+            e["stage_transition"] = f"{a}→{b}"
+            repaired.append(e)
+            logger.warning(f"Repaired missing stage_transition for edge {e.get('source')} -> {e.get('target')}: {e['stage_transition']}")
+        
+        a, b = e["stage_transition"].split("→", 1)
+        a = a.strip()
+        b = b.strip()
+        
+        if stage_idx.get(b, 99) - stage_idx.get(a, -99) != 1:
+            warnings.append(f"Invalid stage transition {e['stage_transition']}; forcing next hop")
+            i = stage_idx.get(a, 0)
+            e["stage_transition"] = f"{a}→{FIXED_STAGES[min(i+1, len(FIXED_STAGES)-1)]}"
+            logger.warning(f"Fixed invalid stage transition: {e['stage_transition']}")
+        
         if e.get("source") not in node_ids or e.get("target") not in node_ids:
-            warnings.append(f"Edge references unknown nodes {e}")
+            warnings.append(f"Edge references unknown nodes; removing: {e}")
+            edges_to_remove.append(e)
+            logger.warning(f"Dropping edge with unknown nodes: {e.get('source')} -> {e.get('target')}")
+    
+    # Remove invalid edges
+    out["edges"] = [e for e in out.get("edges", []) if e not in edges_to_remove]
+    
+    if repaired:
+        logger.info(f"Repaired {len(repaired)} edges with missing stage_transition")
+    if edges_to_remove:
+        logger.warning(f"Removed {len(edges_to_remove)} edges with unknown node references")
+    
     return out, warnings
 
 def mk_priors_from_llm(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -73,7 +134,7 @@ class DiscreteDBN:
                 return n["stage"]
         return "Reconnaissance"
 
-    def fit_em(self, sequences: List[Dict[str,int]], max_iter: int = 25, tol: float = 1e-4):
+    def fit_em(self, sequences: List[Dict[str,int]], max_iter: int = 50, tol: float = 1e-4):
         last_ll = None
         for it in range(max_iter):
             num = defaultdict(float)
@@ -173,7 +234,7 @@ async def fit_model(session: AsyncSession, spec_id: str, data_bindings: Dict[str
                 seq = {k:int(1 if bool(v) else 0) for k,v in r.items()}
                 sequences.append(seq)
 
-    fit_info = model.fit_em(sequences, max_iter=25, tol=1e-4)
+    fit_info = model.fit_em(sequences, max_iter=50, tol=1e-4)
     # Serialize tuple keys to strings for JSONB storage
     q_params_serialized = {f"{s}->{t}": float(v) for (s, t), v in model.q_params.items()}
     params = {"type":"noisy-or-binary", "q_params": q_params_serialized, "q_leak": model.q_leak, "fit_info": fit_info}
@@ -183,6 +244,20 @@ async def fit_model(session: AsyncSession, spec_id: str, data_bindings: Dict[str
     await session.commit()
     await session.refresh(mv)
     return mv.id, metrics
+
+def _coerce_binary_map(d: Dict[str, Any]) -> Dict[str, int]:
+    """Normalize evidence/interventions to {node@stage: 0/1} explicitly."""
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, bool):
+            out[k] = 1 if v else 0
+        elif isinstance(v, (int, float)):
+            out[k] = 1 if v != 0 else 0
+        elif isinstance(v, str):
+            out[k] = 1 if v.strip().lower() in ("1", "true", "yes", "y") else 0
+        else:
+            out[k] = 0
+    return out
 
 async def infer(session: AsyncSession, model_version_id: str, evidence: Dict[str, Any], interventions: Dict[str, Any]):
     mv = await session.get(DBNModelVersion, model_version_id)
@@ -202,7 +277,12 @@ async def infer(session: AsyncSession, model_version_id: str, evidence: Dict[str
             # Handle case where JSONB deserialized tuple as list
             model.q_params[(k[0], k[1])] = float(v)
     model.q_leak.update({k: float(v) for k,v in mv.params.get("q_leak", {}).items()})
-    ev = dict(evidence); ev.update({k:int(1 if v else 0) for k,v in interventions.items()})
+    
+    # Coerce evidence and interventions to binary
+    ev = _coerce_binary_map(evidence)
+    iv = _coerce_binary_map(interventions)
+    ev.update(iv)
+    
     stage_post = model.forward_infer(ev)
     domains = set(d for st in stage_post.values() for d in st.keys())
     aggregates = {d: float(np.mean([stage_post[s].get(d,0.0) for s in FIXED_STAGES])) for d in domains}

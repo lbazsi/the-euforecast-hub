@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List, Dict, Optional
 import re
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.services.file_store import get_file_by_name
+from app.services.file_store import get_file_by_name, get_file_by_id
 
 _SENT_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
@@ -21,8 +21,14 @@ def split_into_sentences(text: str) -> List[str]:
     # Filter very short fragments
     return [p.strip() for p in parts if len(p.strip()) >= 3]
 
-async def load_text_from_file(session: AsyncSession, file_id: str) -> Optional[str]:
-    rec = await get_file_by_name(session, file_id)
+async def load_text_from_file(session: AsyncSession, file_id_or_name: str) -> Optional[str]:
+    """
+    Load text from file, supporting both database ID and filename.
+    Tries ID first, then falls back to filename lookup.
+    """
+    rec = await get_file_by_id(session, file_id_or_name)
+    if not rec:
+        rec = await get_file_by_name(session, file_id_or_name)
     if not rec:
         return None
     try:
