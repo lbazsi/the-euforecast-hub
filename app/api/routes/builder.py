@@ -1,7 +1,5 @@
-from fastapi import APIRouter, Depends, UploadFile, File
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from sqlalchemy import select, desc
 from datetime import datetime, timezone
 import uuid
@@ -9,9 +7,6 @@ import uuid
 from app.core.database import get_session
 from app.models.builder import BuilderProject, BuilderMessage
 from app.schemas.builder import (
-    BuilderProjectCreate, BuilderProjectDetail,
-    BuilderRunRequest, BuilderRunResponse,
-    BuilderMessageRequest, BuilderMessageResponse
     BuilderProjectCreate,
     BuilderRunRequest,
     BuilderRunResponse,
@@ -26,7 +21,6 @@ router = APIRouter()
 
 @router.post("/builder/projects", status_code=201)
 async def save_project(payload: BuilderProjectCreate, session: AsyncSession = Depends(get_session)):
-    rec = BuilderProject(name=payload.name, stage_configurations=payload.stageConfigurations)
     stage_configurations = {
         stage: cfg.model_dump(mode="json") if hasattr(cfg, "model_dump") else cfg
         for stage, cfg in payload.stageConfigurations.items()
@@ -62,15 +56,9 @@ async def get_project(id: str, session: AsyncSession = Depends(get_session)):
 
 @router.post("/builder/run")
 async def run_builder(payload: BuilderRunRequest, session: AsyncSession = Depends(get_session)):
-    stage_configs = {}
     stage_configs: dict = {}
     if payload.projectId:
         rec = await session.get(BuilderProject, payload.projectId)
-        if not rec: error_response("NOT_FOUND", "Project not found", 404)
-        stage_configs = rec.stage_configurations
-    elif payload.stageConfigurations:
-        stage_configs = payload.stageConfigurations
-    else:
         if not rec:
             error_response("NOT_FOUND", "Project not found", 404)
         stage_configs = rec.stage_configurations or {}
@@ -82,8 +70,6 @@ async def run_builder(payload: BuilderRunRequest, session: AsyncSession = Depend
     if not stage_configs:
         error_response("BAD_REQUEST", "Provide projectId or stageConfigurations", 400)
 
-    # Call LLaMA for skeleton
-    llama_json = await get_llama_forecast("Generate forecast skeleton", stage_configs)
     scenario_prompt = payload.scenarioPrompt
     if not scenario_prompt and payload.projectId:
         res = await session.execute(
@@ -136,12 +122,7 @@ async def run_builder(payload: BuilderRunRequest, session: AsyncSession = Depend
             "impact": round(top_score, 4),
         })
 
-    # Compose scenario results per spec (graph + timeline mock)
     scenario_results = {
-        "graph": llama_json,
-        "timeline": [{"t": i+1, "domain": d, "impact": v} for i,(d,v) in enumerate([
-            ("Environment", 0.4), ("Economy", 0.5), ("Society", 0.3)
-        ])]
         "graph": {
             "nodes": llama_json.get("nodes", []),
             "edges": llama_json.get("edges", []),
@@ -153,14 +134,6 @@ async def run_builder(payload: BuilderRunRequest, session: AsyncSession = Depend
     }
 
     created_at = datetime.now(timezone.utc).isoformat()
-    return {"success": True, "data": {
-        "forecastId": str(uuid.uuid4()),
-        "scenarioResults": scenario_results,
-        "metadata": {"stagesAnalyzed": [
-            "Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control (C2)","Actions on Objectives"
-        ], "domainWeightsApplied": stage_configs, "timestamp": created_at},
-        "createdAt": created_at
-    }}
     metadata = {
         "stagesAnalyzed": FIXED_STAGES,
         "domainWeightsApplied": stage_configs,
@@ -188,8 +161,6 @@ async def builder_message(payload: BuilderMessageRequest, session: AsyncSession 
     suggestions = ["Run forecast", "Adjust domain weights", "Add a stage-specific NL rule"]
     # Optionally store message if projectId exists
     if payload.projectId:
-        msg = BuilderMessage(project_id=payload.projectId, timestamp=datetime.utcnow().isoformat(), message=payload.message, type="user")
-        session.add(msg); await session.commit()
         msg = BuilderMessage(
             project_id=payload.projectId,
             timestamp=datetime.utcnow().isoformat(),
