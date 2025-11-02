@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.routes import forecasts, collaborations, uploads, builder, dbn
@@ -24,11 +25,26 @@ def create_app() -> FastAPI:
     app.include_router(builder.router, prefix=prefix, tags=["Builder"])
     app.include_router(dbn.router, prefix=prefix, tags=["DBN"])
 
+    @app.get("/", include_in_schema=False)
+    async def root() -> JSONResponse:
+        return JSONResponse(
+            {
+                "message": "EU Forecast Hub API",
+                "docs_url": "https://the-euforecast-hub.vercel.app/docs",
+                "healthcheck": f"{prefix}/health",
+            }
+        )
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        return Response(status_code=204)
+
     @app.get(f"{prefix}/health")
     async def health():
         return {"success": True, "data": {"status": "ok"}}
 
     return app
+    app = create_app()
 
 
 app = create_app()
