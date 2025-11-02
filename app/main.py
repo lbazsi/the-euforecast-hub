@@ -6,10 +6,12 @@ from app.api.routes import forecasts, collaborations, uploads, builder, dbn
 def create_app() -> FastAPI:
     app = FastAPI(title=settings.APP_NAME, version="0.1.0")
 
-    # CORS
+    # CORS - ensure CORS_ORIGINS is a list
+    cors_origins = settings.CORS_ORIGINS if isinstance(settings.CORS_ORIGINS, list) else [settings.CORS_ORIGINS]
+    
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
