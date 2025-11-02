@@ -29,3 +29,4 @@ def create_app() -> FastAPI:
         return {"success": True, "data": {"status": "ok"}}
 
     return app
+    app = create_app()
