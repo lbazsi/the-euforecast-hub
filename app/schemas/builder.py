@@ -46,6 +46,7 @@ class BuilderProjectDetail(BaseModel):
 class BuilderRunRequest(BaseModel):
     projectId: Optional[str] = None
     stageConfigurations: Optional[Dict[StageName, StageConfig]] = None
+    scenarioPrompt: Optional[str] = None
 
 class BuilderRunResponse(BaseModel):
     forecastId: str

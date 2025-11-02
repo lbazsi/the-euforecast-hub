@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy import select, desc
 from datetime import datetime, timezone
 import uuid
 
@@ -12,6 +13,7 @@ from app.schemas.builder import (
     BuilderMessageRequest, BuilderMessageResponse
 )
 from app.services.llama_client import get_llama_forecast
+from app.services.dbn_engine import build_spec, fit_model, infer, FIXED_STAGES
 from app.utils.responses import error_response
 
 router = APIRouter()
@@ -50,6 +52,7 @@ async def get_project(id: str, session: AsyncSession = Depends(get_session)):
 @router.post("/builder/run")
 async def run_builder(payload: BuilderRunRequest, session: AsyncSession = Depends(get_session)):
     stage_configs = {}
+    stage_configs: dict = {}
     if payload.projectId:
         rec = await session.get(BuilderProject, payload.projectId)
         if not rec: error_response("NOT_FOUND", "Project not found", 404)
@@ -57,10 +60,70 @@ async def run_builder(payload: BuilderRunRequest, session: AsyncSession = Depend
     elif payload.stageConfigurations:
         stage_configs = payload.stageConfigurations
     else:
+        if not rec:
+            error_response("NOT_FOUND", "Project not found", 404)
+        stage_configs = rec.stage_configurations or {}
+    if not stage_configs and payload.stageConfigurations:
+        stage_configs = {
+            stage: cfg.model_dump(mode="json") if hasattr(cfg, "model_dump") else cfg
+            for stage, cfg in payload.stageConfigurations.items()
+        }
+    if not stage_configs:
         error_response("BAD_REQUEST", "Provide projectId or stageConfigurations", 400)
 
     # Call LLaMA for skeleton
     llama_json = await get_llama_forecast("Generate forecast skeleton", stage_configs)
+    scenario_prompt = payload.scenarioPrompt
+    if not scenario_prompt and payload.projectId:
+        res = await session.execute(
+            select(BuilderMessage)
+            .where(BuilderMessage.project_id == payload.projectId, BuilderMessage.type == "user")
+            .order_by(desc(BuilderMessage.timestamp))
+            .limit(1)
+        )
+        latest_msg = res.scalars().first()
+        if latest_msg:
+            scenario_prompt = latest_msg.message
+    if not scenario_prompt:
+        scenario_prompt = "Generate a forecast based on the configured scenario."
+
+    # Call LLaMA to obtain a DBN-ready structure
+    llama_json = await get_llama_forecast(scenario_prompt, stage_configs)
+
+    # Persist and process through the DBN engine
+    spec_id, structural_warnings = await build_spec(session, llama_json, {"stage_configurations": stage_configs})
+
+    synthetic_rows = []
+    for edge in llama_json.get("edges", [])[:5]:
+        source_key = f"{edge.get('source')}@0"
+        target_key = f"{edge.get('target')}@1"
+        synthetic_rows.append({source_key: 1, target_key: 1})
+    if not synthetic_rows:
+        synthetic_rows.append({})
+
+    mv_id, fit_metrics = await fit_model(
+        session,
+        spec_id,
+        {"synthetic_case": synthetic_rows},
+        {"synthetic_case": 1.0},
+    )
+
+    stage_posteriors, aggregates = await infer(session, mv_id, evidence={}, interventions={})
+    stage_posteriors = {stage: {d: float(v) for d, v in dom.items()} for stage, dom in stage_posteriors.items()}
+    aggregates = {d: float(v) for d, v in aggregates.items()}
+
+    timeline = []
+    for idx, stage in enumerate(FIXED_STAGES, start=1):
+        dom_scores = stage_posteriors.get(stage, {})
+        if not dom_scores:
+            continue
+        top_domain, top_score = max(dom_scores.items(), key=lambda item: item[1])
+        timeline.append({
+            "t": idx,
+            "stage": stage,
+            "domain": top_domain,
+            "impact": round(top_score, 4),
+        })
 
     # Compose scenario results per spec (graph + timeline mock)
     scenario_results = {
@@ -68,6 +131,14 @@ async def run_builder(payload: BuilderRunRequest, session: AsyncSession = Depend
         "timeline": [{"t": i+1, "domain": d, "impact": v} for i,(d,v) in enumerate([
             ("Environment", 0.4), ("Economy", 0.5), ("Society", 0.3)
         ])]
+        "graph": {
+            "nodes": llama_json.get("nodes", []),
+            "edges": llama_json.get("edges", []),
+            "warnings": structural_warnings,
+        },
+        "timeline": timeline,
+        "stagePosteriors": stage_posteriors,
+        "aggregateImpacts": aggregates,
     }
 
     created_at = datetime.now(timezone.utc).isoformat()
@@ -79,6 +150,24 @@ async def run_builder(payload: BuilderRunRequest, session: AsyncSession = Depend
         ], "domainWeightsApplied": stage_configs, "timestamp": created_at},
         "createdAt": created_at
     }}
+    metadata = {
+        "stagesAnalyzed": FIXED_STAGES,
+        "domainWeightsApplied": stage_configs,
+        "timestamp": created_at,
+        "modelSpecId": spec_id,
+        "modelVersionId": mv_id,
+        "fitMetrics": fit_metrics,
+    }
+
+    return {
+        "success": True,
+        "data": {
+            "forecastId": str(uuid.uuid4()),
+            "scenarioResults": scenario_results,
+            "metadata": metadata,
+            "createdAt": created_at,
+        },
+    }
 
 @router.post("/builder/message")
 async def builder_message(payload: BuilderMessageRequest, session: AsyncSession = Depends(get_session)):
@@ -90,4 +179,12 @@ async def builder_message(payload: BuilderMessageRequest, session: AsyncSession 
     if payload.projectId:
         msg = BuilderMessage(project_id=payload.projectId, timestamp=datetime.utcnow().isoformat(), message=payload.message, type="user")
         session.add(msg); await session.commit()
+        msg = BuilderMessage(
+            project_id=payload.projectId,
+            timestamp=datetime.utcnow().isoformat(),
+            message=payload.message,
+            type="user",
+        )
+        session.add(msg)
+        await session.commit()
     return {"success": True, "data": {"response": response, "suggestions": suggestions, "sessionId": session_id}}
