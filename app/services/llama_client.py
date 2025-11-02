@@ -18,16 +18,16 @@ KILLCHAIN_STAGES = [
 ]
 
 async def get_llama_forecast(prompt: str, stage_configs: dict) -> dict:
-    """Call Groq API (OpenAI-compatible) for forecast generation."""
-    payload = {"message": prompt, "stageConfigurations": stage_configs}
+    """Call LLM API (Groq, Ollama, or custom) for forecast generation."""
     
     # Skip API call if URL is the default mock endpoint
     if settings.LLAMA_API_URL == "http://localhost:8000/mock-llama":
         logger.info("Using mock LLAMA response (default endpoint)")
         return _get_mock_response()
     
-    # Check if using Groq API
+    # Check API type
     is_groq = "api.groq.com" in settings.LLAMA_API_URL
+    is_ollama = "/api/generate" in settings.LLAMA_API_URL or "11434" in settings.LLAMA_API_URL
     
     if is_groq:
         if not settings.GROQ_API_KEY:
@@ -132,8 +132,118 @@ Generate a DBN graph structure in the required JSON format."""
         except Exception as e:
             logger.warning(f"Groq API error: {e}, using mock response")
             return _get_mock_response()
+    elif is_ollama:
+        # Ollama API format
+        if not settings.LLAMA_MODEL:
+            logger.warning("LLAMA_MODEL not set for Ollama, using mock response")
+            return _get_mock_response()
+        
+        # Build system prompt and user content
+        system_prompt = """You are a forecasting model generator that creates Dynamic Bayesian Network (DBN) structures.
+Generate a JSON response with nodes and edges representing forecast scenarios.
+
+Kill chain stages (in order):
+["Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control (C2)","Actions on Objectives"]
+
+Required format:
+{
+  "stage": "string (one of the kill chain stages)",
+  "nodes": [
+    {
+      "id": "string (unique identifier like ECO_01, SOC_02)",
+      "label": "string (human-readable name)",
+      "domain": "string (Economy, Society, Environment, Policy, Technology)",
+      "stage": "string (one of the kill chain stages above - REQUIRED)",
+      "impact": 0.0-1.0,
+      "confidence": 0.0-1.0
+    }
+  ],
+  "edges": [
+    {
+      "source": "node_id",
+      "target": "node_id",
+      "sign": "+" or "-",
+      "strength": 0.0-1.0,
+      "stage_transition": "Reconnaissance→Weaponization" (REQUIRED - use Unicode arrow →, not ->),
+      "strength_hint": 0.0-1.0,
+      "llm_confidence": 0.0-1.0
+    }
+  ]
+}
+
+Rules:
+- Each node MUST include "stage" field.
+- Each edge MUST include "stage_transition" with Unicode arrow → (not ->).
+- stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization").
+- Return ONLY valid JSON, no markdown formatting."""
+        
+        user_content = f"""Prompt: {prompt}
+
+Stage Configurations:
+{json.dumps(stage_configs, indent=2)}
+
+Generate a DBN graph structure in the required JSON format. Return only the JSON object, no additional text."""
+        
+        # Combine into a single prompt for Ollama
+        full_prompt = f"{system_prompt}\n\n{user_content}"
+        
+        ollama_payload = {
+            "model": settings.LLAMA_MODEL,
+            "prompt": full_prompt,
+            "stream": False,
+            "format": "json"  # Request JSON response format
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    settings.LLAMA_API_URL,
+                    json=ollama_payload
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                
+                # Extract response from Ollama format
+                content = data.get("response", "")
+                if not content:
+                    logger.error("Empty response from Ollama API")
+                    return _get_mock_response()
+                
+                # Parse JSON from response (may need to extract JSON from markdown code blocks)
+                content = content.strip()
+                # Remove markdown code blocks if present
+                if content.startswith("```json"):
+                    content = content[7:]
+                if content.startswith("```"):
+                    content = content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+                content = content.strip()
+                
+                try:
+                    llama_json = json.loads(content)
+                    logger.info("Successfully received response from Ollama API")
+                    return llama_json
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON from Ollama response: {e}")
+                    logger.debug(f"Response content: {content[:200]}")
+                    return _get_mock_response()
+                    
+        except httpx.TimeoutException:
+            logger.warning(f"Ollama API timeout at {settings.LLAMA_API_URL}, using mock response")
+            return _get_mock_response()
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"Ollama API HTTP error {e.response.status_code}: {e.response.text}, using mock response")
+            return _get_mock_response()
+        except httpx.RequestError as e:
+            logger.warning(f"Ollama API request failed: {e}, using mock response")
+            return _get_mock_response()
+        except Exception as e:
+            logger.warning(f"Ollama API error: {e}, using mock response")
+            return _get_mock_response()
     else:
         # Original custom endpoint logic
+        payload = {"message": prompt, "stageConfigurations": stage_configs}
         try:
             async with httpx.AsyncClient(timeout=20) as client:
                 resp = await client.post(settings.LLAMA_API_URL, json=payload)

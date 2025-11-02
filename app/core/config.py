@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     DATABASE_URL: str
     LLAMA_API_URL: str = "http://localhost:8000/mock-llama"
+    LLAMA_MODEL: Optional[str] = None
+    LLAMA_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
     # Make CORS_ORIGINS a string to avoid JSON parsing
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:8080,http://localhost:3000"
