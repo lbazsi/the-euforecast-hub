@@ -17,9 +17,40 @@ from app.utils.responses import error_response
 from app.models.dbn import DBNModelSpec, DBNModelVersion
 
 logger = logging.getLogger(__name__)
-FORECAST_STORAGE_DIR = Path("data/forecasts")
-MODEL_STORAGE_DIR = Path("models")
-MODEL_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_forecast_storage_dir():
+    """Get writable directory for forecast storage. Uses /tmp on serverless (ephemeral) or data/forecasts locally."""
+    try:
+        test_dir = Path("data/forecasts")
+        test_dir.mkdir(parents=True, exist_ok=True)
+        return test_dir
+    except (OSError, PermissionError):
+        try:
+            tmp_dir = Path("/tmp/data/forecasts")
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Using /tmp directory for forecast storage (serverless environment)")
+            return tmp_dir
+        except Exception as e:
+            logger.warning(f"Could not create storage directory: {e}")
+            return None
+
+
+def get_model_storage_dir():
+    """Get writable directory for model storage. Uses /tmp on serverless (ephemeral) or models locally."""
+    try:
+        test_dir = Path("models")
+        test_dir.mkdir(parents=True, exist_ok=True)
+        return test_dir
+    except (OSError, PermissionError):
+        try:
+            tmp_dir = Path("/tmp/models")
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Using /tmp directory for model storage (serverless environment)")
+            return tmp_dir
+        except Exception as e:
+            logger.warning(f"Could not create model storage directory: {e}")
+            return None
 
 router = APIRouter()
 
@@ -156,29 +187,63 @@ async def retrain_dbn(session: AsyncSession = Depends(get_session)):
     """
     Retrain DBN models from accumulated forecast entries.
     This endpoint loads all stored forecast entries and aggregates them for retraining.
+    
+    Note: On serverless (Vercel), file storage is ephemeral. Consider using database queries
+    from LLMInteraction model for persistent storage.
     """
     try:
-        # Load all forecast entries
-        forecast_files = list(FORECAST_STORAGE_DIR.glob("*.json"))
-        
-        if not forecast_files:
-            return error_response(
-                "NO_DATA", 
-                "No forecast entries found for retraining. Generate some forecasts first.",
-                400
+        # Get storage directory (may be /tmp on serverless)
+        forecast_storage_dir = get_forecast_storage_dir()
+        if forecast_storage_dir is None:
+            # Fallback: Query database for interactions instead
+            logger.info("File storage unavailable, querying database for interactions")
+            from app.models.interaction import LLMInteraction
+            from sqlalchemy import select
+            
+            result = await session.execute(
+                select(LLMInteraction)
+                .where(LLMInteraction.using_fallback == False)
+                .where(LLMInteraction.normalized_spec.isnot(None))
             )
-        
-        logger.info(f"Loading {len(forecast_files)} forecast entries for retraining")
-        
-        entries = []
-        for filepath in forecast_files:
-            try:
-                with open(filepath, "r") as f:
-                    entry = json.load(f)
-                    entries.append(entry)
-            except Exception as e:
-                logger.warning(f"Failed to load {filepath}: {e}")
-                continue
+            interactions = result.scalars().all()
+            
+            if not interactions:
+                return error_response(
+                    "NO_DATA",
+                    "No forecast entries found for retraining. Generate some forecasts first.",
+                    400
+                )
+            
+            entries = []
+            for interaction in interactions:
+                entries.append({
+                    "prompt": interaction.prompt,
+                    "output": interaction.llama_output or {},
+                    "normalized_spec": interaction.normalized_spec or {},
+                    "timestamp": int(interaction.timestamp.timestamp()) if interaction.timestamp else int(time.time()),
+                })
+        else:
+            # Load all forecast entries from file system
+            forecast_files = list(forecast_storage_dir.glob("*.json"))
+            
+            if not forecast_files:
+                return error_response(
+                    "NO_DATA", 
+                    "No forecast entries found for retraining. Generate some forecasts first.",
+                    400
+                )
+            
+            logger.info(f"Loading {len(forecast_files)} forecast entries for retraining")
+            
+            entries = []
+            for filepath in forecast_files:
+                try:
+                    with open(filepath, "r") as f:
+                        entry = json.load(f)
+                        entries.append(entry)
+                except Exception as e:
+                    logger.warning(f"Failed to load {filepath}: {e}")
+                    continue
         
         if not entries:
             return error_response(
@@ -234,16 +299,24 @@ async def retrain_dbn(session: AsyncSession = Depends(get_session)):
             "timestamp": int(time.time())
         })
         
-        # Save aggregated spec to file for future reference
-        model_file = MODEL_STORAGE_DIR / f"dbn_retrained_{int(time.time())}.json"
-        with open(model_file, "w") as f:
-            json.dump({
-                "spec": aggregated_spec,
-                "spec_id": spec_id,
-                "source_entries": len(entries),
-                "warnings": warnings,
-                "timestamp": int(time.time())
-            }, f, indent=2)
+        # Save aggregated spec to file for future reference (if possible)
+        model_storage_dir = get_model_storage_dir()
+        model_file = None
+        if model_storage_dir:
+            try:
+                model_file = model_storage_dir / f"dbn_retrained_{int(time.time())}.json"
+                with open(model_file, "w") as f:
+                    json.dump({
+                        "spec": aggregated_spec,
+                        "spec_id": spec_id,
+                        "source_entries": len(entries),
+                        "warnings": warnings,
+                        "timestamp": int(time.time())
+                    }, f, indent=2)
+                logger.info(f"Saved retrained model to: {model_file}")
+            except Exception as e:
+                logger.warning(f"Could not save model file: {e}")
+                model_file = None
         
         return {
             "success": True,

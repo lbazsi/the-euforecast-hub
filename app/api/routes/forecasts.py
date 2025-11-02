@@ -18,19 +18,39 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Directory for storing forecast entries for DBN training
-FORECAST_STORAGE_DIR = Path("data/forecasts")
-FORECAST_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+def get_forecast_storage_dir():
+    """Get writable directory for forecast storage. Uses /tmp on serverless (ephemeral) or data/forecasts locally."""
+    # Check if we can write to current directory (local dev)
+    try:
+        test_dir = Path("data/forecasts")
+        test_dir.mkdir(parents=True, exist_ok=True)
+        return test_dir
+    except (OSError, PermissionError):
+        # Serverless environment - use /tmp (ephemeral, but writable)
+        try:
+            tmp_dir = Path("/tmp/data/forecasts")
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Using /tmp directory for forecast storage (serverless environment)")
+            return tmp_dir
+        except Exception as e:
+            logger.warning(f"Could not create storage directory: {e}")
+            return None
 
 
 def store_forecast_entry(prompt: str, output: dict, normalized_spec: dict):
-    """Store forecast entry for future DBN retraining."""
+    """Store forecast entry for future DBN retraining. Returns None if storage fails."""
     try:
+        storage_dir = get_forecast_storage_dir()
+        if storage_dir is None:
+            logger.warning("Forecast storage directory not available, skipping file storage")
+            return None
+        
         # Create a hash-based filename from prompt
         prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
         timestamp = int(time.time())
         filename = f"{timestamp}_{prompt_hash}.json"
-        filepath = FORECAST_STORAGE_DIR / filename
+        filepath = storage_dir / filename
         
         entry = {
             "prompt": prompt,
