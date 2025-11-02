@@ -5,7 +5,7 @@ import os
 class Settings(BaseSettings):
     APP_NAME: str = "EU ForecastHUB API"
     API_PREFIX: str = "/api/v1"
-    DATABASE_URL: str
+    DATABASE_URL: str = "sqlite+aiosqlite:///./forecast_hub.db"
     LLAMA_API_URL: str = "http://localhost:8000/mock-llama"
     LLAMA_MODEL: Optional[str] = None
     LLAMA_API_KEY: Optional[str] = None
