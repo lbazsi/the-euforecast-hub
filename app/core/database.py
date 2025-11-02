@@ -5,7 +5,20 @@ from sqlalchemy.types import TypeDecorator, JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from app.core.config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_pre_ping=True)
+database_url = settings.DATABASE_URL
+normalized_url = database_url.lower()
+
+engine_kwargs = {
+    "echo": False,
+    "pool_pre_ping": True,
+}
+
+if normalized_url.startswith("sqlite"):
+    # SQLite does not support SSL parameters such as ``sslmode``.
+    # Provide only the arguments it understands to avoid connection errors.
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+engine = create_async_engine(database_url, **engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 class Base(DeclarativeBase):
