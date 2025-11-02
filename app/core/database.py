@@ -5,6 +5,7 @@ from sqlalchemy.types import TypeDecorator, JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import make_url
 from app.core.config import settings
+import asyncio
 
 
 database_url = settings.DATABASE_URL
@@ -57,6 +58,10 @@ if drivername.startswith("sqlite"):
 engine = create_async_engine(database_url, **engine_kwargs)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
+# Flag and lock for lazy initialization (for serverless environments)
+_models_initialized = False
+_init_lock = asyncio.Lock()
+
 
 class Base(DeclarativeBase):
     pass
@@ -74,12 +79,9 @@ def get_json_type():
 JSONType = get_json_type()
 
 
-async def get_session() -> AsyncSession:
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
 async def init_models():
+    """Initialize database models by creating all tables."""
+    global _models_initialized
     # Import models here to avoid circular imports
     from app.models import all_models  # noqa
     
@@ -88,3 +90,29 @@ async def init_models():
     # Simple connectivity check
     async with AsyncSessionLocal() as s:
         await s.execute(text("SELECT 1"))
+    _models_initialized = True
+
+
+async def ensure_models_initialized():
+    """Ensure models are initialized (lazy initialization for serverless)."""
+    global _models_initialized
+    if _models_initialized:
+        return
+    
+    async with _init_lock:
+        # Check again after acquiring lock (double-check pattern)
+        if _models_initialized:
+            return
+        try:
+            await init_models()
+            print("✅ Database tables initialized (lazy init).")
+        except Exception as e:
+            print(f"⚠️ Database initialization failed: {e}")
+            # Don't raise - allow retry on next request
+
+
+async def get_session() -> AsyncSession:
+    """Get database session, ensuring tables are initialized first."""
+    await ensure_models_initialized()
+    async with AsyncSessionLocal() as session:
+        yield session
