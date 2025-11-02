@@ -140,20 +140,28 @@ Generate a DBN graph structure in the required JSON format."""
             return _get_mock_response()
         
         # Build system prompt and user content
-        system_prompt = """You are a forecasting model generator that creates Dynamic Bayesian Network (DBN) structures.
-Generate a JSON response with nodes and edges representing forecast scenarios.
+        system_prompt = """You are an expert forecasting analyst that creates Dynamic Bayesian Network (DBN) structures from scenario descriptions.
+
+Your task: Analyze the user's scenario prompt and extract the specific entities, events, and causal relationships mentioned. Create nodes and edges that reflect the ACTUAL content of their prompt, not generic examples.
 
 Kill chain stages (in order):
 ["Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control (C2)","Actions on Objectives"]
 
-Required format:
+Domain categories:
+- Economy: markets, prices, GDP, trade, inflation, employment, currency, investments
+- Environment: climate, weather, natural disasters, resources, pollution, sustainability
+- Society: population, health, migration, education, social unrest, demographics
+- Policy: regulations, laws, government actions, subsidies, taxes, international relations
+- Technology: innovation, infrastructure, automation, digital services, cybersecurity
+
+Required JSON format:
 {
-  "stage": "string (one of the kill chain stages)",
+  "stage": "string (one of the kill chain stages - choose the most relevant starting stage)",
   "nodes": [
     {
-      "id": "string (unique identifier like ECO_01, SOC_02)",
-      "label": "string (human-readable name)",
-      "domain": "string (Economy, Society, Environment, Policy, Technology)",
+      "id": "string (unique identifier like ENV_01, ECO_02, SOC_03, POL_04, TEC_05)",
+      "label": "string (specific name extracted from the user's scenario, e.g., 'Renewable Energy Adoption' not 'Energy')",
+      "domain": "string (Economy, Society, Environment, Policy, or Technology)",
       "stage": "string (one of the kill chain stages above - REQUIRED)",
       "impact": 0.0-1.0,
       "confidence": 0.0-1.0
@@ -172,18 +180,34 @@ Required format:
   ]
 }
 
-Rules:
-- Each node MUST include "stage" field.
-- Each edge MUST include "stage_transition" with Unicode arrow → (not ->).
-- stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization").
-- Return ONLY valid JSON, no markdown formatting."""
+Critical Instructions:
+1. EXTRACT SPECIFIC ENTITIES from the user's prompt - if they mention "drought", create a node for "Drought", not generic "Environmental Event"
+2. If they mention "AI policies", create nodes specific to AI, not generic "Technology Policy"
+3. Each node MUST include a "stage" field matching one of the kill chain stages
+4. Each edge MUST include "stage_transition" with Unicode arrow → (not ->)
+5. stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization")
+6. Generate 3-8 nodes and 2-6 edges that reflect the CAUSAL RELATIONSHIPS described in the prompt
+7. Use node IDs with domain prefixes: ENV_ for Environment, ECO_ for Economy, SOC_ for Society, POL_ for Policy, TEC_ for Technology
+8. Return ONLY valid JSON, no markdown code blocks, no explanatory text
+
+Example: If the prompt mentions "drought reduces crop yields and impacts food prices", you should create:
+- Node: "Drought" (ENV_01, Environment, Reconnaissance)
+- Node: "Crop Yields" (ECO_01, Economy, Weaponization)  
+- Node: "Food Prices" (ECO_02, Economy, Delivery)
+- Edge: ENV_01 → ECO_01 (negative, Reconnaissance→Weaponization)
+- Edge: ECO_01 → ECO_02 (negative, Weaponization→Delivery)"""
         
-        user_content = f"""Prompt: {prompt}
+        user_content = f"""User Scenario Prompt:
+"{prompt}"
 
 Stage Configurations:
-{json.dumps(stage_configs, indent=2)}
+{json.dumps(stage_configs, indent=2) if stage_configs else "{}"}
 
-Generate a DBN graph structure in the required JSON format. Return only the JSON object, no additional text."""
+Task: Analyze the scenario prompt above and generate a DBN structure with nodes and edges that specifically reflect the entities, events, and causal relationships mentioned in that prompt. 
+
+Be specific and context-aware - extract the actual concepts from the user's text rather than using generic examples.
+
+Return the JSON structure now:"""
         
         # Combine into a single prompt for Ollama
         full_prompt = f"{system_prompt}\n\n{user_content}"
@@ -192,7 +216,7 @@ Generate a DBN graph structure in the required JSON format. Return only the JSON
             "model": settings.LLAMA_MODEL or "llama3",
             "prompt": full_prompt,
             "stream": False,
-            "options": {"temperature": 0.7},
+            "options": {"temperature": 0.8, "top_p": 0.9},  # Higher temperature for more diverse outputs
             "format": "json"  # Request JSON response format
         }
         
