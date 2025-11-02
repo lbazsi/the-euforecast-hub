@@ -206,27 +206,39 @@ async def generate_forecast(
         # Calculate response time
         response_time_ms = (time.time() - start_time) * 1000
         
-        # Store interaction for continuous learning (database)
-        interaction = LLMInteraction(
-            prompt=prompt,
-            stage_configs=stage_configs,
-            llama_output=raw_llama_json,
-            normalized_spec=llama_json,
-            user_id=user_id,
-            session_id=session_id,
-            source="forecasts/generate",
-            response_time_ms=response_time_ms,
-            model_version=settings.LLAMA_MODEL or "llama3",
-            using_fallback=using_fallback
-        )
-        session.add(interaction)
-        await session.commit()
+        # Store interaction for continuous learning (database) - but don't let this block the response
+        try:
+            interaction = LLMInteraction(
+                prompt=prompt,
+                stage_configs=stage_configs,
+                llama_output=raw_llama_json,
+                normalized_spec=llama_json,
+                user_id=user_id,
+                session_id=session_id,
+                source="forecasts/generate",
+                response_time_ms=response_time_ms,
+                model_version=settings.LLAMA_MODEL or "llama3",
+                using_fallback=using_fallback
+            )
+            session.add(interaction)
+            await session.commit()
+            logger.debug("Successfully stored interaction in database")
+        except Exception as db_error:
+            logger.warning(f"Failed to store interaction in database: {db_error}", exc_info=True)
+            # Try to rollback and continue - don't fail the whole request
+            try:
+                await session.rollback()
+            except Exception:
+                pass
         
-        # Store forecast entry for DBN retraining (file system)
+        # Store forecast entry for DBN retraining (file system) - also don't let this block
         if not using_fallback:  # Only store successful non-fallback forecasts
-            store_forecast_entry(prompt, raw_llama_json, llama_json)
+            try:
+                store_forecast_entry(prompt, raw_llama_json, llama_json)
+            except Exception as file_error:
+                logger.warning(f"Failed to store forecast entry to file: {file_error}")
         
-        # Return the structured response
+        # Return the structured response (even if storage failed)
         return {
             "success": True,
             "data": {
@@ -238,9 +250,10 @@ async def generate_forecast(
         }
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Failed to generate forecast: {e}", exc_info=True)
+        error_type = type(e).__name__
+        logger.error(f"Failed to generate forecast: {error_type}: {error_msg}", exc_info=True)
         
-        # Store failed interaction for analysis
+        # Store failed interaction for analysis (but don't let this cause another error)
         try:
             response_time_ms = (time.time() - start_time) * 1000
             interaction = LLMInteraction(
@@ -254,11 +267,23 @@ async def generate_forecast(
                 response_time_ms=response_time_ms,
                 model_version=settings.LLAMA_MODEL or "llama3",
                 using_fallback=True,
-                error_message=error_msg
+                error_message=f"{error_type}: {error_msg}"
             )
             session.add(interaction)
             await session.commit()
         except Exception as store_error:
-            logger.warning(f"Failed to store interaction: {store_error}")
+            logger.warning(f"Failed to store interaction: {store_error}", exc_info=True)
+            # Try to rollback if commit failed
+            try:
+                await session.rollback()
+            except Exception:
+                pass
         
-        return error_response("GENERATION_ERROR", f"Failed to generate forecast: {error_msg}", 500)
+        # Return user-friendly error message
+        user_message = "Failed to generate forecast. Please try again with a more detailed scenario."
+        if "timeout" in error_msg.lower():
+            user_message = "Forecast generation timed out. Please try again with a shorter scenario."
+        elif "json" in error_msg.lower() or "parse" in error_msg.lower():
+            user_message = "Failed to parse forecast response. Please try rephrasing your scenario."
+        
+        return error_response("GENERATION_ERROR", user_message, 500)
