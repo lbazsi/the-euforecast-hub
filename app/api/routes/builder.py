@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy import select, desc
@@ -11,6 +12,11 @@ from app.schemas.builder import (
     BuilderProjectCreate, BuilderProjectDetail,
     BuilderRunRequest, BuilderRunResponse,
     BuilderMessageRequest, BuilderMessageResponse
+    BuilderProjectCreate,
+    BuilderRunRequest,
+    BuilderRunResponse,
+    BuilderMessageRequest,
+    BuilderMessageResponse,
 )
 from app.services.llama_client import get_llama_forecast
 from app.services.dbn_engine import build_spec, fit_model, infer, FIXED_STAGES
@@ -21,6 +27,11 @@ router = APIRouter()
 @router.post("/builder/projects", status_code=201)
 async def save_project(payload: BuilderProjectCreate, session: AsyncSession = Depends(get_session)):
     rec = BuilderProject(name=payload.name, stage_configurations=payload.stageConfigurations)
+    stage_configurations = {
+        stage: cfg.model_dump(mode="json") if hasattr(cfg, "model_dump") else cfg
+        for stage, cfg in payload.stageConfigurations.items()
+    }
+    rec = BuilderProject(name=payload.name, stage_configurations=stage_configurations)
     session.add(rec)
     await session.commit()
     await session.refresh(rec)
