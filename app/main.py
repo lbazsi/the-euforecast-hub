@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.core.database import init_models
 from app.api.routes import forecasts, collaborations, uploads, builder, dbn
 
 def create_app() -> FastAPI:
@@ -24,6 +25,15 @@ def create_app() -> FastAPI:
     app.include_router(uploads.router, prefix=prefix, tags=["Uploads"])
     app.include_router(builder.router, prefix=prefix, tags=["Builder"])
     app.include_router(dbn.router, prefix=prefix, tags=["DBN"])
+
+    @app.on_event("startup")
+    async def startup_event():
+        """Initialize database models when the app starts."""
+        try:
+            await init_models()
+            print("Database models initialized successfully")
+        except Exception as e:
+            print(f"Warning: Database initialization failed: {e}")
 
     @app.get("/", include_in_schema=False)
     async def root() -> JSONResponse:
@@ -48,7 +58,5 @@ def create_app() -> FastAPI:
         return {"success": True, "data": {"status": "ok"}}
 
     return app
-    app = create_app()
-
 
 app = create_app()

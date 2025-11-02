@@ -1,7 +1,6 @@
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String, Text, DateTime, func
-from sqlalchemy.dialects.postgresql import JSONB
-from app.core.database import Base
+from app.core.database import Base, JSONType
 from datetime import datetime
 import uuid
 
@@ -16,6 +15,6 @@ class Forecast(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")
     category: Mapped[str] = mapped_column(String(100), default="general")
     # Use meta_data as Python attribute, but keep 'metadata' as column name
-    meta_data: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    meta_data: Mapped[dict] = mapped_column("metadata", JSONType, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
