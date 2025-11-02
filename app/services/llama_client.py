@@ -64,6 +64,16 @@ Stage Configurations:
 
 Return ONLY valid JSON."""
 
+def _fallback_response(reason: str) -> dict:
+    """Return deterministic fallback response while logging the reason."""
+    logger.warning(f"⚠️ Falling back to mock forecast: {reason}")
+    fallback = _get_mock_response()
+    # Annotate so downstream callers can explicitly detect the fallback
+    fallback["using_fallback"] = True
+    fallback["fallback_reason"] = reason
+    return fallback
+
+
 async def get_llama_forecast(prompt: str, stage_configs: dict = None) -> dict:
     """Send scenario prompt to Groq LLaMA-3 and normalize response."""
     
@@ -74,13 +84,11 @@ async def get_llama_forecast(prompt: str, stage_configs: dict = None) -> dict:
     
     # Check if API key is set
     if not settings.LLAMA_API_KEY:
-        logger.warning("⚠️ LLAMA_API_KEY not set, using mock response")
-        return _get_mock_response()
+        return _fallback_response("LLAMA_API_KEY missing")
     
     # Check if we should use mock endpoint
     if settings.LLAMA_API_URL == "http://localhost:8000/mock-llama":
-        logger.warning("⚠️ Using mock LLAMA response (default endpoint)")
-        return _get_mock_response()
+        return _fallback_response("LLAMA_API_URL points to mock endpoint")
     
     headers = {
         "Authorization": f"Bearer {settings.LLAMA_API_KEY}",
@@ -116,7 +124,7 @@ async def get_llama_forecast(prompt: str, stage_configs: dict = None) -> dict:
             
     except Exception as e:
         logger.warning(f"Groq API request failed: {e}", exc_info=True)
-        return {"stage": "Error", "nodes": [], "edges": [], "using_fallback": True}
+        return _fallback_response("Groq API request failed")
 
     # Try to parse JSON
     parsed = None
@@ -137,8 +145,8 @@ async def get_llama_forecast(prompt: str, stage_configs: dict = None) -> dict:
             logger.debug(f"Response content (first 500 chars): {content[:500]}")
     
     if not parsed:
-        logger.warning("❗ No valid JSON; returning empty structure.")
-        return {"stage": "Error", "nodes": [], "edges": [], "using_fallback": True}
+        logger.warning("❗ No valid JSON; returning fallback structure.")
+        return _fallback_response("Groq response was not valid JSON")
 
     # Normalize the response
     normalized = normalize_llm_spec(parsed)

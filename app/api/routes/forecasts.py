@@ -204,9 +204,10 @@ async def generate_forecast(
         
         # Check if fallback was used
         using_fallback = (
-            raw_llama_json.get("stage") is None or 
+            raw_llama_json.get("stage") is None or
             len(llama_json.get("nodes", [])) == 0 or
-            settings.LLAMA_API_URL == "http://localhost:8000/mock-llama"
+            settings.LLAMA_API_URL == "http://localhost:8000/mock-llama" or
+            raw_llama_json.get("using_fallback") is True
         )
         
         # If normalization resulted in empty nodes/edges, log warning
@@ -257,7 +258,8 @@ async def generate_forecast(
                 "nodes": llama_json.get("nodes", []),
                 "edges": llama_json.get("edges", []),
                 "stage": raw_llama_json.get("stage", "Reconnaissance"),
-                "using_fallback": using_fallback
+                "using_fallback": using_fallback,
+                "fallback_reason": raw_llama_json.get("fallback_reason") if using_fallback else None
             }
         }
     except Exception as e:
