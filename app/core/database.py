@@ -1,3 +1,5 @@
+import asyncio
+
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import text
@@ -23,42 +25,7 @@ sslmode_value = None
 # ``sslmode`` is not universally supported.  Capture it so we can either
 # translate it (for asyncpg) or drop it (for SQLite/other drivers).
 for key in list(query_params.keys()):
-    if key.lower() == "sslmode":
-        sslmode_value = query_params.pop(key)
-
-if sslmode_value is not None:
-    if drivername.startswith("postgresql+asyncpg"):
-        # ``asyncpg`` expects a boolean ``ssl`` argument rather than ``sslmode``.
-        ssl_normalised = str(sslmode_value).lower()
-        connect_args = engine_kwargs.setdefault("connect_args", {})
-
-        if ssl_normalised in {"disable", "off", "false"}:
-            connect_args["ssl"] = False
-        elif ssl_normalised in {"require", "required", "verify-full", "verify-ca", "true"}:
-            # ``True`` enforces SSL; asyncpg will validate certificates based on
-            # the environment (Neon, Supabase, etc.).
-            connect_args["ssl"] = True
-        else:
-            # For other modes (e.g. ``prefer``/``allow``) we omit the argument,
-            # letting asyncpg pick the default behaviour.
-            connect_args.pop("ssl", None)
-    elif drivername.startswith("postgres"):
-        # Other PostgreSQL drivers (e.g. psycopg) understand ``sslmode`` so we
-        # restore the original value.
-        query_params["sslmode"] = sslmode_value
-
-if query_params != original_query_params:
-    url_obj = url_obj.set(query=query_params)
-    database_url = url_obj.render_as_string(hide_password=False)
-
-if drivername.startswith("sqlite"):
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
-
-engine = create_async_engine(database_url, **engine_kwargs)
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
-
-class Base(DeclarativeBase):
-    __allow_unmapped__ = True  # Allow legacy type annotations
+@@ -62,26 +64,47 @@ class Base(DeclarativeBase):
 
 # Create a database-agnostic JSON type that works with both PostgreSQL (JSONB) and SQLite (JSON)
 def get_json_type():
@@ -85,3 +52,24 @@ async def init_models():
     # Simple connectivity check
     async with AsyncSessionLocal() as s:
         await s.execute(text("SELECT 1"))
+
+
+async def safe_init() -> None:
+    """Ensure database tables exist when the module is imported."""
+    try:
+        await init_models()
+        print("✅ Database tables initialized successfully.")
+    except Exception as exc:
+        print(f"⚠️ Database initialization skipped or failed: {exc}")
+
+
+def _schedule_safe_init() -> None:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(safe_init())
+    else:
+        loop.create_task(safe_init())
+
+
+_schedule_safe_init()
