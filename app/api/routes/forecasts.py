@@ -4,6 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 import logging
 import time
+import json
+import hashlib
+from pathlib import Path
 from app.core.database import get_session
 from app.models.forecast import Forecast
 from app.models.interaction import LLMInteraction
@@ -14,6 +17,36 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Directory for storing forecast entries for DBN training
+FORECAST_STORAGE_DIR = Path("data/forecasts")
+FORECAST_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def store_forecast_entry(prompt: str, output: dict, normalized_spec: dict):
+    """Store forecast entry for future DBN retraining."""
+    try:
+        # Create a hash-based filename from prompt
+        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
+        timestamp = int(time.time())
+        filename = f"{timestamp}_{prompt_hash}.json"
+        filepath = FORECAST_STORAGE_DIR / filename
+        
+        entry = {
+            "prompt": prompt,
+            "output": output,
+            "normalized_spec": normalized_spec,
+            "timestamp": timestamp,
+        }
+        
+        with open(filepath, "w") as f:
+            json.dump(entry, f, indent=2)
+        
+        logger.info(f"Stored forecast entry: {filepath}")
+        return str(filepath)
+    except Exception as e:
+        logger.warning(f"Failed to store forecast entry: {e}")
+        return None
 
 @router.get("/forecasts")
 async def list_forecasts(
@@ -135,7 +168,7 @@ async def generate_forecast(
         # Calculate response time
         response_time_ms = (time.time() - start_time) * 1000
         
-        # Store interaction for continuous learning
+        # Store interaction for continuous learning (database)
         interaction = LLMInteraction(
             prompt=prompt,
             stage_configs=stage_configs,
@@ -150,6 +183,10 @@ async def generate_forecast(
         )
         session.add(interaction)
         await session.commit()
+        
+        # Store forecast entry for DBN retraining (file system)
+        if not using_fallback:  # Only store successful non-fallback forecasts
+            store_forecast_entry(prompt, raw_llama_json, llama_json)
         
         # Return the structured response
         return {

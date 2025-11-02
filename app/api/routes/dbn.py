@@ -2,6 +2,11 @@ from fastapi import APIRouter, Depends, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Dict, Any
 from sqlalchemy import select, desc
+import json
+import glob
+import logging
+import time
+from pathlib import Path
 from app.core.database import get_session
 from app.schemas.dbn import DBNBuildRequest, DBNFitRequest, DBNInferRequest
 from app.services.dbn_engine import build_spec, fit_model, infer
@@ -10,6 +15,11 @@ from app.services.semantic_parser import extract_entities, extract_relations, sc
 from app.services.causal_skeleton import build_skeleton, to_dbn_spec
 from app.utils.responses import error_response
 from app.models.dbn import DBNModelSpec, DBNModelVersion
+
+logger = logging.getLogger(__name__)
+FORECAST_STORAGE_DIR = Path("data/forecasts")
+MODEL_STORAGE_DIR = Path("models")
+MODEL_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 router = APIRouter()
 
@@ -140,3 +150,113 @@ async def dbn_latest_version(spec_id: str, session: AsyncSession = Depends(get_s
         }}
     except Exception as e:
         return error_response("GRAPH_ERROR", f"Failed to fetch latest version: {str(e)}", 500)
+
+@router.post("/dbn/retrain")
+async def retrain_dbn(session: AsyncSession = Depends(get_session)):
+    """
+    Retrain DBN models from accumulated forecast entries.
+    This endpoint loads all stored forecast entries and aggregates them for retraining.
+    """
+    try:
+        # Load all forecast entries
+        forecast_files = list(FORECAST_STORAGE_DIR.glob("*.json"))
+        
+        if not forecast_files:
+            return error_response(
+                "NO_DATA", 
+                "No forecast entries found for retraining. Generate some forecasts first.",
+                400
+            )
+        
+        logger.info(f"Loading {len(forecast_files)} forecast entries for retraining")
+        
+        entries = []
+        for filepath in forecast_files:
+            try:
+                with open(filepath, "r") as f:
+                    entry = json.load(f)
+                    entries.append(entry)
+            except Exception as e:
+                logger.warning(f"Failed to load {filepath}: {e}")
+                continue
+        
+        if not entries:
+            return error_response(
+                "INVALID_DATA",
+                "No valid forecast entries could be loaded.",
+                400
+            )
+        
+        # Aggregate normalized specs
+        aggregated_nodes = {}
+        aggregated_edges = []
+        node_id_map = {}
+        
+        for entry in entries:
+            spec = entry.get("normalized_spec", {})
+            nodes = spec.get("nodes", [])
+            edges = spec.get("edges", [])
+            
+            # Aggregate nodes (deduplicate by label/domain)
+            for node in nodes:
+                key = f"{node.get('label', '')}_{node.get('domain', '')}"
+                if key not in aggregated_nodes:
+                    aggregated_nodes[key] = node
+                    node_id_map[node.get('id')] = node.get('id')
+            
+            # Aggregate edges
+            for edge in edges:
+                # Map old node IDs to aggregated IDs if needed
+                source_id = edge.get('source')
+                target_id = edge.get('target')
+                
+                # Check if edge already exists
+                edge_exists = any(
+                    e.get('source') == source_id and e.get('target') == target_id
+                    for e in aggregated_edges
+                )
+                
+                if not edge_exists:
+                    aggregated_edges.append(edge)
+        
+        # Create aggregated spec
+        aggregated_spec = {
+            "nodes": list(aggregated_nodes.values()),
+            "edges": aggregated_edges
+        }
+        
+        logger.info(f"Aggregated {len(aggregated_spec['nodes'])} nodes and {len(aggregated_spec['edges'])} edges")
+        
+        # Build DBN spec in database
+        spec_id, warnings = await build_spec(session, aggregated_spec, {
+            "retrained": True,
+            "source_entry_count": len(entries),
+            "timestamp": int(time.time())
+        })
+        
+        # Save aggregated spec to file for future reference
+        model_file = MODEL_STORAGE_DIR / f"dbn_retrained_{int(time.time())}.json"
+        with open(model_file, "w") as f:
+            json.dump({
+                "spec": aggregated_spec,
+                "spec_id": spec_id,
+                "source_entries": len(entries),
+                "warnings": warnings,
+                "timestamp": int(time.time())
+            }, f, indent=2)
+        
+        return {
+            "success": True,
+            "data": {
+                "status": "retrained",
+                "spec_id": spec_id,
+                "entries_processed": len(entries),
+                "aggregated_nodes": len(aggregated_spec['nodes']),
+                "aggregated_edges": len(aggregated_spec['edges']),
+                "warnings": warnings,
+                "model_file": str(model_file)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Retrain failed: {e}", exc_info=True)
+        return error_response("RETRAIN_ERROR", f"Failed to retrain DBN: {str(e)}", 500)
