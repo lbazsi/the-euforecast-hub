@@ -340,38 +340,98 @@ def normalize_llm_spec(raw: dict) -> dict:
     - edges[].strength_hint, edges[].llm_confidence
     - nodes[].stage
     """
+    if not isinstance(raw, dict):
+        logger.error(f"normalize_llm_spec: raw input is not a dict, got {type(raw)}")
+        return {"nodes": [], "edges": []}
+    
     out = {"nodes": [], "edges": []}
     nodes = raw.get("nodes", [])
     edges = raw.get("edges", [])
+    
+    if not isinstance(nodes, list):
+        logger.warning(f"normalize_llm_spec: nodes is not a list, got {type(nodes)}, using empty list")
+        nodes = []
+    if not isinstance(edges, list):
+        logger.warning(f"normalize_llm_spec: edges is not a list, got {type(edges)}, using empty list")
+        edges = []
 
     # Normalize nodes
-    for n in nodes:
-        node_id = n.get("id") or n.get("label", "NODE").upper().replace(" ", "_")
-        out["nodes"].append({
-            "id": node_id,
-            "label": n.get("label", "Unknown"),
-            "domain": n.get("domain", "Environment"),
-            "stage": n.get("stage") or "Reconnaissance",  # default; backfilled below from edges
-            "state_type": "discrete",
-            "state_space": ["low", "med", "high"],
-        })
+    for idx, n in enumerate(nodes):
+        if not isinstance(n, dict):
+            logger.warning(f"normalize_llm_spec: node at index {idx} is not a dict, skipping")
+            continue
+            
+        try:
+            node_id = n.get("id")
+            if not node_id:
+                label = n.get("label", f"NODE_{idx}")
+                if not isinstance(label, str):
+                    label = str(label)
+                node_id = label.upper().replace(" ", "_").replace("-", "_")
+            
+            if not isinstance(node_id, str):
+                node_id = str(node_id)
+            
+            out["nodes"].append({
+                "id": node_id,
+                "label": str(n.get("label", f"Node {idx}")),
+                "domain": str(n.get("domain", "Environment")),
+                "stage": str(n.get("stage") or "Reconnaissance"),  # default; backfilled below from edges
+                "state_type": "discrete",
+                "state_space": ["low", "med", "high"],
+            })
+        except Exception as e:
+            logger.warning(f"normalize_llm_spec: failed to normalize node at index {idx}: {e}")
+            continue
 
     # Index
     node_by_id = {n["id"]: n for n in out["nodes"]}
 
     # Normalize edges
-    for e in edges:
-        st = e.get("stage_transition", "")
-        st = st.replace("->", "→") if st else ""  # ASCII to Unicode
+    for idx, e in enumerate(edges):
+        if not isinstance(e, dict):
+            logger.warning(f"normalize_llm_spec: edge at index {idx} is not a dict, skipping")
+            continue
+            
+        try:
+            st = e.get("stage_transition", "")
+            if isinstance(st, str):
+                st = st.replace("->", "→")  # ASCII to Unicode
+            else:
+                st = ""
 
-        edge = {
-            "source": e.get("source"),
-            "target": e.get("target"),
-            "stage_transition": st or "",  # may fill below
-            "strength_hint": float(e.get("strength_hint", e.get("strength", 0.6))),
-            "llm_confidence": float(e.get("llm_confidence", e.get("confidence", 0.7))),
-        }
-        out["edges"].append(edge)
+            # Safely convert numeric values
+            strength_hint = e.get("strength_hint") or e.get("strength") or 0.6
+            llm_confidence = e.get("llm_confidence") or e.get("confidence") or 0.7
+            
+            try:
+                strength_hint = float(strength_hint)
+            except (ValueError, TypeError):
+                strength_hint = 0.6
+                
+            try:
+                llm_confidence = float(llm_confidence)
+            except (ValueError, TypeError):
+                llm_confidence = 0.7
+
+            source = e.get("source")
+            target = e.get("target")
+            
+            if not source or not target:
+                logger.warning(f"normalize_llm_spec: edge at index {idx} missing source or target, skipping")
+                continue
+
+            edge = {
+                "source": str(source),
+                "target": str(target),
+                "stage_transition": st or "",  # may fill below
+                "strength_hint": strength_hint,
+                "llm_confidence": llm_confidence,
+            }
+            out["edges"].append(edge)
+        except Exception as e:
+            logger.warning(f"normalize_llm_spec: failed to normalize edge at index {idx}: {e}")
+            continue
 
     # Backfill node stages from edge transitions if missing or defaulted
     for e in out["edges"]:

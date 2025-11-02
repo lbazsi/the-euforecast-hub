@@ -173,10 +173,22 @@ async def generate_forecast(
     
     try:
         # Call LLaMA to get forecast structure
+        logger.info(f"Generating forecast for prompt: {prompt[:100]}...")
         raw_llama_json = await get_llama_forecast(prompt, stage_configs)
+        
+        if not isinstance(raw_llama_json, dict):
+            logger.error(f"get_llama_forecast returned non-dict: {type(raw_llama_json)}")
+            raise ValueError(f"LLM returned invalid response type: {type(raw_llama_json)}")
+        
+        logger.debug(f"Raw LLM response keys: {list(raw_llama_json.keys())}")
+        logger.debug(f"Raw LLM nodes count: {len(raw_llama_json.get('nodes', []))}")
+        logger.debug(f"Raw LLM edges count: {len(raw_llama_json.get('edges', []))}")
         
         # Normalize LLM response to DBN spec format
         llama_json = normalize_llm_spec(raw_llama_json)
+        
+        logger.debug(f"Normalized nodes count: {len(llama_json.get('nodes', []))}")
+        logger.debug(f"Normalized edges count: {len(llama_json.get('edges', []))}")
         
         # Check if fallback was used
         using_fallback = (
@@ -184,6 +196,12 @@ async def generate_forecast(
             len(llama_json.get("nodes", [])) == 0 or
             settings.LLAMA_API_URL == "http://localhost:8000/mock-llama"
         )
+        
+        # If normalization resulted in empty nodes/edges, log warning
+        if len(llama_json.get("nodes", [])) == 0:
+            logger.warning(f"Normalization resulted in 0 nodes. Raw response: {raw_llama_json}")
+        if len(llama_json.get("edges", [])) == 0:
+            logger.warning(f"Normalization resulted in 0 edges. Raw response: {raw_llama_json}")
         
         # Calculate response time
         response_time_ms = (time.time() - start_time) * 1000
