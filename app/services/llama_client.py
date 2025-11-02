@@ -38,7 +38,9 @@ async def get_llama_forecast(prompt: str, stage_configs: dict) -> dict:
         # Format request for Groq (OpenAI-compatible) - using same improved prompt as Ollama
         system_prompt = """You are an expert forecasting analyst that creates Dynamic Bayesian Network (DBN) structures from scenario descriptions.
 
-Your task: Analyze the user's scenario prompt and extract the specific entities, events, and causal relationships mentioned. Create nodes and edges that reflect the ACTUAL content of their prompt, not generic examples.
+CRITICAL: You must generate UNIQUE, CONTEXT-SPECIFIC nodes based ONLY on the user's prompt. DO NOT reuse example nodes or generic patterns from previous requests.
+
+Your task: Analyze the user's scenario prompt and extract the SPECIFIC entities, events, and causal relationships mentioned. Create nodes and edges that reflect ONLY the ACTUAL content of their prompt.
 
 Kill chain stages (in order):
 ["Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control (C2)","Actions on Objectives"]
@@ -76,22 +78,25 @@ Required JSON format:
   ]
 }
 
-Critical Instructions:
-1. EXTRACT SPECIFIC ENTITIES from the user's prompt - if they mention "drought", create a node for "Drought", not generic "Environmental Event"
-2. If they mention "AI policies", create nodes specific to AI, not generic "Technology Policy"
-3. Each node MUST include a "stage" field matching one of the kill chain stages
-4. Each edge MUST include "stage_transition" with Unicode arrow → (not ->)
-5. stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization")
-6. Generate 3-8 nodes and 2-6 edges that reflect the CAUSAL RELATIONSHIPS described in the prompt
-7. Use node IDs with domain prefixes: ENV_ for Environment, ECO_ for Economy, SOC_ for Society, POL_ for Policy, TEC_ for Technology
-8. Return ONLY valid JSON, no markdown code blocks, no explanatory text
+MANDATORY Rules:
+1. EXTRACT UNIQUE ENTITIES directly from the user's prompt - read their words carefully and create nodes that match their specific scenario
+2. DO NOT reuse labels like "Food Prices", "Civil Unrest", "Crop Yields", or "Drought" unless the user explicitly mentions them
+3. If the user mentions "AI becomes president", create nodes like "AI Leadership", "Automated Governance", "Human-AI Interaction", NOT generic "Technology Policy" or "Society"
+4. If the user mentions specific technologies, policies, events, or actors - use those EXACT concepts in your nodes
+5. Each node MUST include a "stage" field matching one of the kill chain stages
+6. Each edge MUST include "stage_transition" with Unicode arrow → (not ->)
+7. stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization")
+8. Generate 3-8 nodes and 2-6 edges that reflect the CAUSAL RELATIONSHIPS described in the prompt
+9. Use node IDs with domain prefixes: ENV_ for Environment, ECO_ for Economy, SOC_ for Society, POL_ for Policy, TEC_ for Technology
+10. Return ONLY valid JSON, no markdown code blocks, no explanatory text
+11. Think creatively - each prompt should produce a UNIQUE network structure
 
-Example: If the prompt mentions "drought reduces crop yields and impacts food prices", you should create:
-- Node: "Drought" (ENV_01, Environment, Reconnaissance)
-- Node: "Crop Yields" (ECO_01, Economy, Weaponization)  
-- Node: "Food Prices" (ECO_02, Economy, Delivery)
-- Edge: ENV_01 → ECO_01 (negative, Reconnaissance→Weaponization)
-- Edge: ECO_01 → ECO_02 (negative, Weaponization→Delivery)"""
+Example (DO NOT reuse these nodes unless the user mentions them):
+If prompt: "drought reduces crop yields and impacts food prices" → Create "Drought", "Crop Yields", "Food Prices"
+If prompt: "AI becomes president" → Create "AI Leadership", "Automated Decision-Making", "Public Trust in AI", "Political Resistance"
+If prompt: "trade war affects semiconductors" → Create "Trade Restrictions", "Semiconductor Supply", "Tech Manufacturing", "Global Supply Chains"
+
+Remember: Generate NEW nodes for EACH unique prompt. Do not copy patterns from examples."""
         
         user_content = f"""User Scenario Prompt:
 "{prompt}"
@@ -165,7 +170,9 @@ Return the JSON structure now:"""
         # Build system prompt and user content
         system_prompt = """You are an expert forecasting analyst that creates Dynamic Bayesian Network (DBN) structures from scenario descriptions.
 
-Your task: Analyze the user's scenario prompt and extract the specific entities, events, and causal relationships mentioned. Create nodes and edges that reflect the ACTUAL content of their prompt, not generic examples.
+CRITICAL: You must generate UNIQUE, CONTEXT-SPECIFIC nodes based ONLY on the user's prompt. DO NOT reuse example nodes or generic patterns from previous requests.
+
+Your task: Analyze the user's scenario prompt and extract the SPECIFIC entities, events, and causal relationships mentioned. Create nodes and edges that reflect ONLY the ACTUAL content of their prompt.
 
 Kill chain stages (in order):
 ["Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control (C2)","Actions on Objectives"]
@@ -203,22 +210,25 @@ Required JSON format:
   ]
 }
 
-Critical Instructions:
-1. EXTRACT SPECIFIC ENTITIES from the user's prompt - if they mention "drought", create a node for "Drought", not generic "Environmental Event"
-2. If they mention "AI policies", create nodes specific to AI, not generic "Technology Policy"
-3. Each node MUST include a "stage" field matching one of the kill chain stages
-4. Each edge MUST include "stage_transition" with Unicode arrow → (not ->)
-5. stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization")
-6. Generate 3-8 nodes and 2-6 edges that reflect the CAUSAL RELATIONSHIPS described in the prompt
-7. Use node IDs with domain prefixes: ENV_ for Environment, ECO_ for Economy, SOC_ for Society, POL_ for Policy, TEC_ for Technology
-8. Return ONLY valid JSON, no markdown code blocks, no explanatory text
+MANDATORY Rules:
+1. EXTRACT UNIQUE ENTITIES directly from the user's prompt - read their words carefully and create nodes that match their specific scenario
+2. DO NOT reuse labels like "Food Prices", "Civil Unrest", "Crop Yields", or "Drought" unless the user explicitly mentions them
+3. If the user mentions "AI becomes president", create nodes like "AI Leadership", "Automated Governance", "Human-AI Interaction", NOT generic "Technology Policy" or "Society"
+4. If the user mentions specific technologies, policies, events, or actors - use those EXACT concepts in your nodes
+5. Each node MUST include a "stage" field matching one of the kill chain stages
+6. Each edge MUST include "stage_transition" with Unicode arrow → (not ->)
+7. stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization")
+8. Generate 3-8 nodes and 2-6 edges that reflect the CAUSAL RELATIONSHIPS described in the prompt
+9. Use node IDs with domain prefixes: ENV_ for Environment, ECO_ for Economy, SOC_ for Society, POL_ for Policy, TEC_ for Technology
+10. Return ONLY valid JSON, no markdown code blocks, no explanatory text
+11. Think creatively - each prompt should produce a UNIQUE network structure
 
-Example: If the prompt mentions "drought reduces crop yields and impacts food prices", you should create:
-- Node: "Drought" (ENV_01, Environment, Reconnaissance)
-- Node: "Crop Yields" (ECO_01, Economy, Weaponization)  
-- Node: "Food Prices" (ECO_02, Economy, Delivery)
-- Edge: ENV_01 → ECO_01 (negative, Reconnaissance→Weaponization)
-- Edge: ECO_01 → ECO_02 (negative, Weaponization→Delivery)"""
+Example (DO NOT reuse these nodes unless the user mentions them):
+If prompt: "drought reduces crop yields and impacts food prices" → Create "Drought", "Crop Yields", "Food Prices"
+If prompt: "AI becomes president" → Create "AI Leadership", "Automated Decision-Making", "Public Trust in AI", "Political Resistance"
+If prompt: "trade war affects semiconductors" → Create "Trade Restrictions", "Semiconductor Supply", "Tech Manufacturing", "Global Supply Chains"
+
+Remember: Generate NEW nodes for EACH unique prompt. Do not copy patterns from examples."""
         
         user_content = f"""User Scenario Prompt:
 "{prompt}"
