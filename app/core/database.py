@@ -13,16 +13,20 @@ engine_kwargs = {
 }
 
 url_obj = make_url(database_url)
+drivername = url_obj.drivername.lower()
 
-if url_obj.drivername.startswith("sqlite"):
-    # SQLite does not support SSL parameters such as ``sslmode``.
-    # Remove any accidental ``sslmode`` query arguments and provide the
-    # arguments it understands to avoid connection errors.
-    if "sslmode" in url_obj.query:
-        new_query = dict(url_obj.query)
-        new_query.pop("sslmode", None)
-        url_obj = url_obj.set(query=new_query)
-        database_url = url_obj.render_as_string(hide_password=False)
+# ``sslmode`` is not a valid argument for SQLite (and other non-PostgreSQL)
+# drivers.  If it sneaks into the URL, strip it before creating the engine.
+if any(key.lower() == "sslmode" for key in url_obj.query) and not drivername.startswith("postgres"):
+    new_query = {
+        key: value
+        for key, value in url_obj.query.items()
+        if key.lower() != "sslmode"
+    }
+    url_obj = url_obj.set(query=new_query)
+    database_url = url_obj.render_as_string(hide_password=False)
+
+if drivername.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
 
 engine = create_async_engine(database_url, **engine_kwargs)
