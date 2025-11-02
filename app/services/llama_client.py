@@ -19,30 +19,25 @@ KILLCHAIN_STAGES = [
 ]
 
 async def get_llama_forecast(prompt: str, stage_configs: dict) -> dict:
-    """Call LLM API (Groq, Ollama, or custom) for forecast generation."""
+    """Send prompt to Groq LLaMA API and parse JSON response."""
     
     # Log the received prompt
     logger.info(f"🟡 [LLAMA_CLIENT] get_llama_forecast called with prompt: '{prompt}'")
     logger.info(f"🟡 [LLAMA_CLIENT] LLAMA_API_URL: {settings.LLAMA_API_URL}")
+    logger.info(f"🟡 [LLAMA_CLIENT] LLAMA_MODEL: {settings.LLAMA_MODEL}")
     
-    # Skip API call if URL is the default mock endpoint
+    # Check if API key is set
+    if not settings.LLAMA_API_KEY:
+        logger.warning("⚠️ LLAMA_API_KEY not set, using mock response")
+        return _get_mock_response()
+    
+    # Check if we should use mock endpoint
     if settings.LLAMA_API_URL == "http://localhost:8000/mock-llama":
         logger.warning("⚠️ Using mock LLAMA response (default endpoint)")
         return _get_mock_response()
     
-    # Check API type
-    is_groq = "api.groq.com" in settings.LLAMA_API_URL
-    is_ollama = "/api/generate" in settings.LLAMA_API_URL or "11434" in settings.LLAMA_API_URL
-    
-    logger.info(f"🟡 [LLAMA_CLIENT] API type - Groq: {is_groq}, Ollama: {is_ollama}")
-    
-    if is_groq:
-        if not settings.GROQ_API_KEY:
-            logger.warning("GROQ_API_KEY not set, using mock response")
-            return _get_mock_response()
-        
-        # Format request for Groq (OpenAI-compatible) - using same improved prompt as Ollama
-        system_prompt = """You are an expert forecasting analyst that creates Dynamic Bayesian Network (DBN) structures from scenario descriptions.
+    # Build the improved system prompt with context-specific instructions
+    system_prompt = """You are an expert forecasting analyst that creates Dynamic Bayesian Network (DBN) structures from scenario descriptions.
 
 CRITICAL: You must generate UNIQUE, CONTEXT-SPECIFIC nodes based ONLY on the user's prompt. DO NOT reuse example nodes or generic patterns from previous requests.
 
@@ -103,8 +98,8 @@ If prompt: "AI becomes president" → Create "AI Leadership", "Automated Decisio
 If prompt: "trade war affects semiconductors" → Create "Trade Restrictions", "Semiconductor Supply", "Tech Manufacturing", "Global Supply Chains"
 
 Remember: Generate NEW nodes for EACH unique prompt. Do not copy patterns from examples."""
-        
-        user_content = f"""User Scenario Prompt:
+    
+    user_content = f"""User Scenario Prompt:
 "{prompt}"
 
 Stage Configurations:
@@ -115,258 +110,102 @@ Task: Analyze the scenario prompt above and generate a DBN structure with nodes 
 Be specific and context-aware - extract the actual concepts from the user's text rather than using generic examples.
 
 Return the JSON structure now:"""
-        
-        groq_payload = {
-            "model": "llama-3.1-70b-versatile",  # or "mixtral-8x7b-32768"
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ],
-            "temperature": 0.8,  # Higher temperature for more diverse outputs
-            "max_tokens": 2000,
-            "response_format": {"type": "json_object"}  # Request JSON response
-        }
-        
-        headers = {
-            "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    settings.LLAMA_API_URL,
-                    json=groq_payload,
-                    headers=headers
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                
-                # Extract content from Groq response
-                content = data["choices"][0]["message"]["content"]
-                
-                # Parse JSON from response
-                try:
-                    llama_json = json.loads(content)
-                    logger.info("Successfully received response from Groq API")
-                    return llama_json
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse JSON from Groq response: {e}")
-                    logger.debug(f"Response content: {content}")
-                    return _get_mock_response()
-                    
-        except httpx.TimeoutException:
-            logger.warning(f"Groq API timeout at {settings.LLAMA_API_URL}, using mock response")
-            return _get_mock_response()
-        except httpx.HTTPStatusError as e:
-            logger.warning(f"Groq API HTTP error {e.response.status_code}: {e.response.text}, using mock response")
-            return _get_mock_response()
-        except httpx.RequestError as e:
-            logger.warning(f"Groq API request failed: {e}, using mock response")
-            return _get_mock_response()
-        except Exception as e:
-            logger.warning(f"Groq API error: {e}, using mock response")
-            return _get_mock_response()
-    elif is_ollama:
-        # Ollama API format
-        if not settings.LLAMA_MODEL:
-            logger.warning("LLAMA_MODEL not set for Ollama, using mock response")
-            return _get_mock_response()
-        
-        # Build system prompt and user content
-        system_prompt = """You are an expert forecasting analyst that creates Dynamic Bayesian Network (DBN) structures from scenario descriptions.
-
-CRITICAL: You must generate UNIQUE, CONTEXT-SPECIFIC nodes based ONLY on the user's prompt. DO NOT reuse example nodes or generic patterns from previous requests.
-
-Your task: Analyze the user's scenario prompt and extract the SPECIFIC entities, events, and causal relationships mentioned. Create nodes and edges that reflect ONLY the ACTUAL content of their prompt.
-
-Kill chain stages (in order):
-["Reconnaissance","Weaponization","Delivery","Exploitation","Installation","Command & Control (C2)","Actions on Objectives"]
-
-Domain categories:
-- Economy: markets, prices, GDP, trade, inflation, employment, currency, investments
-- Environment: climate, weather, natural disasters, resources, pollution, sustainability
-- Society: population, health, migration, education, social unrest, demographics
-- Policy: regulations, laws, government actions, subsidies, taxes, international relations
-- Technology: innovation, infrastructure, automation, digital services, cybersecurity
-
-Required JSON format:
-{
-  "stage": "string (one of the kill chain stages - choose the most relevant starting stage)",
-  "nodes": [
-    {
-      "id": "string (unique identifier like ENV_01, ECO_02, SOC_03, POL_04, TEC_05)",
-      "label": "string (specific name extracted from the user's scenario, e.g., 'Renewable Energy Adoption' not 'Energy')",
-      "domain": "string (Economy, Society, Environment, Policy, or Technology)",
-      "stage": "string (one of the kill chain stages above - REQUIRED)",
-      "impact": 0.0-1.0,
-      "confidence": 0.0-1.0
+    
+    # Prepare Groq API request (OpenAI-compatible format)
+    headers = {
+        "Authorization": f"Bearer {settings.LLAMA_API_KEY}",
+        "Content-Type": "application/json",
     }
-  ],
-  "edges": [
-    {
-      "source": "node_id",
-      "target": "node_id",
-      "sign": "+" or "-",
-      "strength": 0.0-1.0,
-      "stage_transition": "Reconnaissance→Weaponization" (REQUIRED - use Unicode arrow →, not ->),
-      "strength_hint": 0.0-1.0,
-      "llm_confidence": 0.0-1.0
+    
+    payload = {
+        "model": settings.LLAMA_MODEL or "llama-3.1-70b-versatile",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ],
+        "temperature": 0.8,
+        "top_p": 0.9,
+        "max_tokens": 2000,
+        "response_format": {"type": "json_object"}  # Request JSON response
     }
-  ]
-}
-
-MANDATORY Rules:
-1. EXTRACT UNIQUE ENTITIES directly from the user's prompt - read their words carefully and create nodes that match their specific scenario
-2. DO NOT reuse labels like "Food Prices", "Civil Unrest", "Crop Yields", or "Drought" unless the user explicitly mentions them
-3. If the user mentions "AI becomes president", create nodes like "AI Leadership", "Automated Governance", "Human-AI Interaction", NOT generic "Technology Policy" or "Society"
-4. If the user mentions specific technologies, policies, events, or actors - use those EXACT concepts in your nodes
-5. Each node MUST include a "stage" field matching one of the kill chain stages
-6. Each edge MUST include "stage_transition" with Unicode arrow → (not ->)
-7. stage_transition must connect consecutive kill chain stages (e.g., "Reconnaissance→Weaponization")
-8. Generate 3-8 nodes and 2-6 edges that reflect the CAUSAL RELATIONSHIPS described in the prompt
-9. Use node IDs with domain prefixes: ENV_ for Environment, ECO_ for Economy, SOC_ for Society, POL_ for Policy, TEC_ for Technology
-10. Return ONLY valid JSON, no markdown code blocks, no explanatory text
-11. Think creatively - each prompt should produce a UNIQUE network structure
-
-Example (DO NOT reuse these nodes unless the user mentions them):
-If prompt: "drought reduces crop yields and impacts food prices" → Create "Drought", "Crop Yields", "Food Prices"
-If prompt: "AI becomes president" → Create "AI Leadership", "Automated Decision-Making", "Public Trust in AI", "Political Resistance"
-If prompt: "trade war affects semiconductors" → Create "Trade Restrictions", "Semiconductor Supply", "Tech Manufacturing", "Global Supply Chains"
-
-Remember: Generate NEW nodes for EACH unique prompt. Do not copy patterns from examples."""
-        
-        user_content = f"""User Scenario Prompt:
-"{prompt}"
-
-Stage Configurations:
-{json.dumps(stage_configs, indent=2) if stage_configs else "{}"}
-
-Task: Analyze the scenario prompt above and generate a DBN structure with nodes and edges that specifically reflect the entities, events, and causal relationships mentioned in that prompt. 
-
-Be specific and context-aware - extract the actual concepts from the user's text rather than using generic examples.
-
-Return the JSON structure now:"""
-        
-        # Combine into a single prompt for Ollama
-        full_prompt = f"{system_prompt}\n\n{user_content}"
-        
-        # Log the actual prompt being sent to LLaMA (first 500 chars)
-        logger.info(f"🟠 [OLLAMA] Sending prompt to LLaMA API (first 500 chars):\n{full_prompt[:500]}")
-        logger.info(f"🟠 [OLLAMA] User prompt in full_prompt: '{prompt}'")
-        logger.info(f"🟠 [OLLAMA] Full prompt length: {len(full_prompt)} chars")
-        
-        ollama_payload = {
-            "model": settings.LLAMA_MODEL or "llama3",
-            "prompt": full_prompt,
-            "stream": False,
-            "options": {"temperature": 0.8, "top_p": 0.9},  # Higher temperature for more diverse outputs
-            "format": "json"  # Request JSON response format
-        }
-        
-        logger.info(f"🟠 [OLLAMA] Payload model: {ollama_payload['model']}, URL: {settings.LLAMA_API_URL}")
-        
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(
-                    settings.LLAMA_API_URL,
-                    json=ollama_payload
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                
-                # Log the raw response for debugging
-                logger.info(f"🔴 [OLLAMA RESPONSE] Received response, status: {resp.status_code}")
-                
-                # Extract response from Ollama format
-                content = data.get("response", "")
-                if not content:
-                    logger.error("❌ Empty response from Ollama API")
-                    logger.debug(f"Full Ollama response: {data}")
-                    return _get_mock_response()
-                
-                # Log raw response preview
-                logger.info(f"🔴 [OLLAMA RESPONSE] Raw response preview (first 300 chars): {content[:300]}")
-                logger.info(f"🔴 [OLLAMA RESPONSE] Response length: {len(content)} chars")
-                
-                # Parse JSON from response with robust extraction
-                content = content.strip()
-                
-                # Remove markdown code blocks if present
-                if content.startswith("```json"):
-                    content = content[7:]
-                if content.startswith("```"):
-                    content = content[3:]
-                if content.endswith("```"):
-                    content = content[:-3]
-                content = content.strip()
-                
-                # Try direct JSON parsing first
-                llama_json = None
-                try:
-                    llama_json = json.loads(content)
-                    logger.info(f"✅ [OLLAMA RESPONSE] Successfully parsed JSON from Ollama response")
-                    logger.info(f"✅ [OLLAMA RESPONSE] Parsed nodes count: {len(llama_json.get('nodes', []))}")
-                    logger.info(f"✅ [OLLAMA RESPONSE] Parsed edges count: {len(llama_json.get('edges', []))}")
-                    # Log first few node labels to verify uniqueness
-                    node_labels = [n.get('label', 'N/A') for n in llama_json.get('nodes', [])[:5]]
-                    logger.info(f"✅ [OLLAMA RESPONSE] First 5 node labels: {node_labels}")
-                    return llama_json
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Direct JSON parsing failed: {e}, trying regex extraction")
-                    
-                # Fallback: Extract JSON using regex (look for { ... } pattern)
-                if llama_json is None:
-                    try:
-                        # Match JSON object with balanced braces
-                        match = re.search(r"\{.*\}", content, re.DOTALL)
-                        if match:
-                            json_str = match.group(0)
-                            llama_json = json.loads(json_str)
-                            logger.info("Successfully extracted JSON using regex fallback")
-                            return llama_json
-                        else:
-                            logger.warning("No JSON object found in Ollama response")
-                            logger.debug(f"Response content (first 500 chars): {content[:500]}")
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Regex extraction also failed: {e}")
-                        logger.debug(f"Extracted JSON string: {match.group(0)[:200] if match else 'N/A'}")
-                
-                # If all parsing attempts fail, log and return mock
-                logger.error(f"Failed to parse JSON from Ollama response after all attempts")
-                logger.debug(f"Full response content: {content}")
+    
+    # Log the request details
+    logger.info(f"🟠 [GROQ] Sending prompt to Groq API")
+    logger.info(f"🟠 [GROQ] URL: {settings.LLAMA_API_URL}")
+    logger.info(f"🟠 [GROQ] Model: {payload['model']}")
+    logger.info(f"🟠 [GROQ] User prompt: '{prompt[:100]}{'...' if len(prompt) > 100 else ''}'")
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                settings.LLAMA_API_URL,
+                json=payload,
+                headers=headers
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            
+            # Log the raw response for debugging
+            logger.info(f"🔴 [GROQ RESPONSE] Received response, status: {resp.status_code}")
+            
+            # Extract content from Groq response (OpenAI-compatible format)
+            content = data["choices"][0]["message"]["content"]
+            
+            if not content:
+                logger.error("❌ Empty response from Groq API")
+                logger.debug(f"Full Groq response: {data}")
                 return _get_mock_response()
-                    
-        except httpx.TimeoutException:
-            logger.warning(f"Ollama API timeout at {settings.LLAMA_API_URL}, using mock response")
-            return _get_mock_response()
-        except httpx.HTTPStatusError as e:
-            logger.warning(f"Ollama API HTTP error {e.response.status_code}: {e.response.text}, using mock response")
-            return _get_mock_response()
-        except httpx.RequestError as e:
-            logger.warning(f"Ollama API request failed: {e}, using mock response")
-            return _get_mock_response()
-        except Exception as e:
-            logger.warning(f"Ollama API error: {e}, using mock response")
-            return _get_mock_response()
-    else:
-        # Original custom endpoint logic
-        payload = {"message": prompt, "stageConfigurations": stage_configs}
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(settings.LLAMA_API_URL, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                return data
-        except httpx.TimeoutException:
-            logger.warning(f"LLAMA API timeout at {settings.LLAMA_API_URL}, using mock response")
-            return _get_mock_response()
-        except httpx.RequestError as e:
-            logger.warning(f"LLAMA API request failed: {e}, using mock response")
-            return _get_mock_response()
-        except Exception as e:
-            logger.warning(f"LLAMA API error: {e}, using mock response")
-            return _get_mock_response()
+            
+            # Log raw response preview
+            logger.info(f"🔴 [GROQ RESPONSE] Raw response preview (first 300 chars): {content[:300]}")
+            logger.info(f"🔴 [GROQ RESPONSE] Response length: {len(content)} chars")
+            
+            # Try to extract JSON from the response
+            llama_json = None
+            try:
+                # Try direct JSON parsing first
+                llama_json = json.loads(content)
+                logger.info(f"✅ [GROQ RESPONSE] Successfully parsed JSON from Groq response")
+            except json.JSONDecodeError as e:
+                logger.warning(f"Direct JSON parsing failed: {e}, trying regex extraction")
+                # Fallback: Extract JSON using regex
+                match = re.search(r"\{.*\}", content, re.DOTALL)
+                if match:
+                    try:
+                        llama_json = json.loads(match.group(0))
+                        logger.info(f"✅ [GROQ RESPONSE] Successfully extracted JSON using regex fallback")
+                    except json.JSONDecodeError as e2:
+                        logger.error(f"Regex extraction also failed: {e2}")
+                        logger.debug(f"Extracted JSON string: {match.group(0)[:200] if match else 'N/A'}")
+                else:
+                    logger.warning("No JSON object found in Groq response")
+                    logger.debug(f"Response content (first 500 chars): {content[:500]}")
+            
+            if not llama_json:
+                logger.warning("No valid JSON returned; using fallback.")
+                return _get_mock_response()
+            
+            # Log parsed node information
+            logger.info(f"✅ [GROQ RESPONSE] Parsed nodes count: {len(llama_json.get('nodes', []))}")
+            logger.info(f"✅ [GROQ RESPONSE] Parsed edges count: {len(llama_json.get('edges', []))}")
+            node_labels = [n.get('label', 'N/A') for n in llama_json.get('nodes', [])[:5]]
+            logger.info(f"✅ [GROQ RESPONSE] First 5 node labels: {node_labels}")
+            
+            # Return the parsed JSON directly (normalization happens in forecasts.py)
+            return llama_json
+            
+    except httpx.TimeoutException:
+        logger.warning(f"Groq API timeout at {settings.LLAMA_API_URL}, using mock response")
+        return _get_mock_response()
+    except httpx.HTTPStatusError as e:
+        logger.warning(f"Groq API HTTP error {e.response.status_code}: {e.response.text}, using mock response")
+        return _get_mock_response()
+    except httpx.RequestError as e:
+        logger.warning(f"Groq API request failed: {e}, using mock response")
+        return _get_mock_response()
+    except Exception as e:
+        logger.warning(f"Groq API error: {e}, using mock response", exc_info=True)
+        return _get_mock_response()
 
 def normalize_llm_spec(raw: dict) -> dict:
     """
